@@ -185,23 +185,23 @@
     <!-- Power & Execution buttons -->
     <div class="emu-buttons-grid">
       {#if !$workspaceStore.emulationRunning}
-        <button class="emu-btn play" on:click={startSimulationLoop} title="Run core simulation">
+        <button class="emu-btn play" onclick={startSimulationLoop} title="Run core simulation">
           <Play size={12} fill="currentColor" />
           <span>Start Emu</span>
         </button>
       {:else}
-        <button class="emu-btn stop" on:click={stopSimulationLoop} title="Pause core execution">
+        <button class="emu-btn stop" onclick={stopSimulationLoop} title="Pause core execution">
           <Square size={12} fill="currentColor" />
           <span>Halt Emu</span>
         </button>
       {/if}
 
-      <button class="emu-btn step" on:click={handleStep} disabled={$workspaceStore.emulationRunning} title="Single-step instruction">
+      <button class="emu-btn step" onclick={handleStep} disabled={$workspaceStore.emulationRunning} title="Single-step instruction">
         <ArrowRight size={12} />
         <span>Step Cycle</span>
       </button>
 
-      <button class="emu-btn reset" on:click={handleReset} title="Hard reset virtual MCU core">
+      <button class="emu-btn reset" onclick={handleReset} title="Hard reset virtual MCU core">
         <RotateCcw size={12} />
         <span>System Reset</span>
       </button>
@@ -217,7 +217,7 @@
         id="freq-select" 
         class="emu-select"
         value={$workspaceStore.emulationFrequency}
-        on:change={e => {
+        onchange={e => {
           actions.changeEmulationFrequency(e.currentTarget.value as any);
           if ($workspaceStore.emulationRunning) {
             stopSimulationLoop();
@@ -251,7 +251,7 @@
           max="80" 
           step="0.5" 
           value={$workspaceStore.analogSensors.temp}
-          on:input={e => updateSensorValue("temp", parseFloat(e.currentTarget.value))}
+          oninput={e => updateSensorValue("temp", parseFloat(e.currentTarget.value))}
           class="vertical-slider"
         />
         <span class="sensor-val temp">{$workspaceStore.analogSensors.temp.toFixed(1)}°C</span>
@@ -266,7 +266,7 @@
           max="3.6" 
           step="0.05" 
           value={$workspaceStore.analogSensors.voltage}
-          on:input={e => updateSensorValue("voltage", parseFloat(e.currentTarget.value))}
+          oninput={e => updateSensorValue("voltage", parseFloat(e.currentTarget.value))}
           class="vertical-slider"
         />
         <span class="sensor-val volt">{$workspaceStore.analogSensors.voltage.toFixed(2)}V</span>
@@ -281,7 +281,7 @@
           max="120" 
           step="1" 
           value={$workspaceStore.analogSensors.current}
-          on:input={e => updateSensorValue("current", parseFloat(e.currentTarget.value))}
+          oninput={e => updateSensorValue("current", parseFloat(e.currentTarget.value))}
           class="vertical-slider"
         />
         <span class="sensor-val curr">{$workspaceStore.analogSensors.current.toFixed(1)}mA</span>
