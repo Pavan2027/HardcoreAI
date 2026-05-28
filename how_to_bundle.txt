@@ -1,0 +1,125 @@
+How to bundle HardcoreApp for clients
+====================================
+
+Goal
+----
+Ship an offline desktop bundle so clients do not install Node, npm, Python,
+pip packages, Go, Vite, or local project dependencies.
+
+Supabase and LLM providers stay cloud-based. The local bundle only needs to
+include:
+- Svelte frontend build output
+- FastAPI backend executable
+- Go emulator/debug service executable
+- Any local embedded tooling needed by the emulator flow, such as QEMU,
+  PlatformIO, ARM GCC, GDB, or OpenOCD
+
+Recommended client experience
+-----------------------------
+Client installs HardcoreApp, opens one launcher, and the app starts locally.
+
+Suggested installed layout:
+
+HardcoreApp/
+  HardcoreApp.exe
+  app/
+    frontend/
+    backend/hardcore-api.exe
+    emulator/emulator-service.exe
+    tools/
+      qemu/
+      platformio/
+      arm-none-eabi/
+      openocd/
+  config/
+    app.env
+
+Launcher responsibilities
+-------------------------
+Build a small launcher, preferably in Go, that:
+- starts the bundled FastAPI backend on 127.0.0.1:62018
+- starts the bundled Go emulator service on 127.0.0.1:62019
+- serves or opens the built Svelte frontend
+- passes local config/env values to both services
+- points the emulator service to bundled tool paths
+- shuts down child processes when the app exits
+- reports useful errors if a port is busy or a service fails
+
+Frontend bundling
+-----------------
+1. Put client-facing config in frontend/.env:
+
+   PUBLIC_SUPABASE_URL=...
+   PUBLIC_SUPABASE_ANON_KEY=...
+   PUBLIC_API_BASE=http://127.0.0.1:62018
+   PUBLIC_EMULATOR_BASE=http://127.0.0.1:62019
+
+2. Build the frontend:
+
+   cd frontend
+   npm install
+   npm run build
+
+3. Ship the generated SvelteKit output with the installer.
+
+FastAPI bundling
+----------------
+Use PyInstaller or Nuitka to build backend/main.py into an executable.
+
+Example direction with PyInstaller:
+
+  cd backend
+  pyinstaller --name hardcore-api --onefile main.py
+
+Notes:
+- Include backend runtime files and any RAG assets the backend expects.
+- Backend config should come from app.env or launcher-provided environment
+  variables.
+- Supabase and cloud LLM keys should not be baked into the executable.
+
+Go emulator service bundling
+----------------------------
+Build the Go service as a native executable:
+
+  cd emulator-service
+  go build -o emulator-service.exe .
+
+If build/flash/QEMU features must work without client installs, also bundle:
+- qemu-system-arm
+- PlatformIO or a prepared Python/PlatformIO environment
+- ARM toolchain
+- GDB/OpenOCD if used by debug flows
+
+The emulator service should use bundled tool paths instead of assuming tools
+exist globally on PATH.
+
+Installer
+---------
+Use an installer format per platform:
+- Windows: Inno Setup, NSIS, or WiX
+- macOS: .app plus .dmg
+- Linux: AppImage, .deb, or .rpm
+
+The installer should:
+- copy the full HardcoreApp folder
+- create a desktop/start-menu shortcut to the launcher
+- install no global development dependencies
+- optionally add uninstall support
+
+Important distinction
+---------------------
+This does not need to be a literal single mega-binary. A single installer and a
+single launcher executable is the better target:
+- easier to update
+- easier to debug
+- easier to include tool binaries
+- still gives clients a download-once, click-once, no-dependencies experience
+
+Open decisions for later
+------------------------
+- Whether frontend is served by the launcher or by SvelteKit's generated Node
+  adapter output.
+- Whether to bundle PlatformIO fully or replace it with direct toolchain calls.
+- Whether to ship per-platform QEMU/toolchain bundles.
+- Whether logs should be written under the install directory or the user's app
+  data directory.
