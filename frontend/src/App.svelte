@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { workspaceStore, actions, type FileItem } from "./store";
   import * as monaco from "monaco-editor";
   import EmbeddedConfigurator from "./components/EmbeddedConfigurator.svelte";
@@ -38,6 +38,7 @@
   let selectedPeripheral = "Core Registers";
   let aiOpen = true;
   let showConfigurator = false;
+  let terminalOpen = true;
 
   // Panel sizing
   let sidebarWidth = 260;
@@ -54,28 +55,54 @@
   let terminalEndRef: HTMLDivElement;
   let monacoEditor: monaco.editor.IStandaloneCodeEditor | null = null;
 
-  function handleMouseMove(e: MouseEvent) {
+  async function handleMouseMove(e: MouseEvent) {
     if (isDraggingLeft) {
       sidebarWidth = Math.max(180, Math.min(450, e.clientX - 52));
+      await tick();
+      window.requestAnimationFrame(() => {
+        if (monacoEditor) monacoEditor.layout();
+        resetEditorScroll();
+      });
     }
     if (isDraggingRight) {
       rightSidebarWidth = Math.max(
         280,
         Math.min(600, window.innerWidth - e.clientX),
       );
+      await tick();
+      window.requestAnimationFrame(() => {
+        if (monacoEditor) monacoEditor.layout();
+        resetEditorScroll();
+      });
     }
     if (isDraggingBottom) {
       bottomDrawerHeight = Math.max(
         120,
         Math.min(500, window.innerHeight - e.clientY),
       );
+      await tick();
+      window.requestAnimationFrame(() => {
+        if (monacoEditor) monacoEditor.layout();
+        resetEditorScroll();
+      });
     }
+  }
+
+  function resetEditorScroll() {
+    const frame = document.querySelector(".monaco-editor-frame");
+    const wrapper = document.querySelector(".monaco-editor-wrapper");
+    const container = document.querySelector(".editor-container");
+    if (frame) frame.scrollTop = 0;
+    if (wrapper) wrapper.scrollTop = 0;
+    if (container) container.scrollTop = 0;
   }
 
   function handleMouseUp() {
     isDraggingLeft = false;
     isDraggingRight = false;
     isDraggingBottom = false;
+    document.body.classList.remove('dragging-row', 'dragging-col');
+    resetEditorScroll();
   }
 
   // Draw plot canvas reactively
@@ -324,7 +351,7 @@
   }
 </script>
 
-<svelte:window on:mousemove={handleMouseMove} on:mouseup={handleMouseUp} />
+<svelte:window onmousemove={handleMouseMove} onmouseup={handleMouseUp} />
 <div class="helix-app">
   <!-- 1. Header Command Bar -->
   <header class="helix-header">
@@ -334,7 +361,7 @@
       <!-- svelte-ignore a11y-no-static-element-interactions -->
       <div
         class="target-dropdown-pill"
-        on:click={() => (showConfigurator = !showConfigurator)}
+        onclick={() => (showConfigurator = !showConfigurator)}
       >
         <span>Target: {$workspaceStore.selectedBoard}RETx</span>
         <ChevronDown size={11} class="target-dropdown-arrow" />
@@ -345,7 +372,7 @@
     <div class="command-capsule">
       <button
         class="capsule-btn build"
-        on:click={handleBuild}
+        onclick={handleBuild}
         disabled={$workspaceStore.isCompiling || $workspaceStore.isFlashing}
         title="Compile Project"
       >
@@ -357,7 +384,7 @@
 
       <button
         class="capsule-btn flash"
-        on:click={handleFlash}
+        onclick={handleFlash}
         disabled={$workspaceStore.isCompiling || $workspaceStore.isFlashing}
         title="Flash to Device"
       >
@@ -373,7 +400,7 @@
             ? 'active crashed'
             : 'active debug-running'
           : ''}"
-        on:click={handleDebugToggle}
+        onclick={handleDebugToggle}
         title="Toggle Debugger (OpenOCD + GDB)"
       >
         <Bug size={12} />
@@ -407,7 +434,7 @@
             <button
               class="capsule-btn"
               style="color: var(--accent-cyan); padding: 4px 8px;"
-              on:click={actions.stepOver}
+              onclick={actions.stepOver}
             >
               <span>Step Over</span>
             </button>
@@ -418,7 +445,7 @@
             <button
               class="capsule-btn"
               style="color: var(--accent-cyan); padding: 4px 8px;"
-              on:click={actions.continueExecution}
+              onclick={actions.continueExecution}
             >
               <span>Run</span>
             </button>
@@ -428,7 +455,7 @@
         {#if !$workspaceStore.crashed}
           <button
             class="status-pill"
-            on:click={actions.triggerCrash}
+            onclick={actions.triggerCrash}
             style="border-color: rgba(239, 68, 68, 0.2); cursor: pointer;"
             title="Trigger Heat Loop Overheat Exception"
           >
@@ -438,7 +465,7 @@
         {:else}
           <button
             class="status-pill"
-            on:click={actions.resolveCrash}
+            onclick={actions.resolveCrash}
             style="border-color: rgba(16, 185, 129, 0.4); cursor: pointer;"
             title="Apply Code Patch Fix"
           >
@@ -449,7 +476,7 @@
 
         <button
           class="status-pill"
-          on:click={actions.toggleSerialConnection}
+          onclick={actions.toggleSerialConnection}
           style="cursor: pointer;"
           title="Toggle UART Serial Port Connection"
         >
@@ -465,7 +492,7 @@
 
         <button
           class="status-pill"
-          on:click={() => actions.setActiveSidebarTab("rag")}
+          onclick={() => actions.setActiveSidebarTab("rag")}
           style="cursor: pointer;"
           title="Active Vector Database Files"
         >
@@ -479,19 +506,19 @@
         <Search
           size={14}
           class="control-icon-btn"
-          on:click={() => actions.setActiveSidebarTab("search")}
+          onclick={() => actions.setActiveSidebarTab("search")}
         />
         <Settings
           size={14}
           class="control-icon-btn"
-          on:click={() => (showConfigurator = !showConfigurator)}
+          onclick={() => (showConfigurator = !showConfigurator)}
         />
         <Moon size={14} class="control-icon-btn" />
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <!-- svelte-ignore a11y-no-static-element-interactions -->
         <div
           class="control-icon-btn close-btn-highlight"
-          on:click={() => actions.setShowWelcomeScreen(true)}
+          onclick={() => actions.setShowWelcomeScreen(true)}
         >
           <X size={14} />
         </div>
@@ -517,7 +544,7 @@
             <div class="welcome-action-list">
               <button
                 class="welcome-action-btn"
-                on:click={() => {
+                onclick={() => {
                   actions.setActiveSidebarTab("explorer");
                   actions.setShowWelcomeScreen(false);
                 }}
@@ -527,7 +554,7 @@
               </button>
               <button
                 class="welcome-action-btn"
-                on:click={() => {
+                onclick={() => {
                   actions.setActiveSidebarTab("boards");
                   actions.setShowWelcomeScreen(false);
                 }}
@@ -537,7 +564,7 @@
               </button>
               <button
                 class="welcome-action-btn"
-                on:click={() => {
+                onclick={() => {
                   actions.setActiveSidebarTab("explorer");
                   actions.setShowWelcomeScreen(false);
                   actions.addBuildLog(
@@ -558,7 +585,7 @@
               <!-- svelte-ignore a11y-no-static-element-interactions -->
               <div
                 class="recent-item"
-                on:click={() => {
+                onclick={() => {
                   actions.setSelectedBoard("STM32F401");
                   actions.setSelectedProbe("ST-Link V2");
                   actions.setShowWelcomeScreen(false);
@@ -571,7 +598,7 @@
               <!-- svelte-ignore a11y-no-static-element-interactions -->
               <div
                 class="recent-item"
-                on:click={() => {
+                onclick={() => {
                   actions.setSelectedBoard("ESP32-S3");
                   actions.setSelectedProbe("J-Link");
                   actions.setShowWelcomeScreen(false);
@@ -590,7 +617,7 @@
           </div>
           <button
             class="welcome-enter-btn"
-            on:click={() => actions.setShowWelcomeScreen(false)}
+            onclick={() => actions.setShowWelcomeScreen(false)}
           >
             <span>Open Workspace</span>
             <ArrowRight size={14} />
@@ -600,16 +627,17 @@
     </div>
   {:else}
     <!-- 2. Main Workspace Layout -->
+    <div class="helix-main-workspace {$workspaceStore.isDebugging ? 'debug-active' : ''} {aiOpen ? 'ai-open' : ''}">
 
-    <!-- Leftmost Activity Bar -->
-    <nav class="activity-bar">
+      <!-- Leftmost Activity Bar -->
+      <nav class="activity-bar">
       <!-- svelte-ignore a11y-click-events-have-key-events -->
       <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
       <button
         class="activity-item {$workspaceStore.activeSidebarTab === 'explorer'
           ? 'active'
           : ''}"
-        on:click={() => actions.setActiveSidebarTab("explorer")}
+        onclick={() => actions.setActiveSidebarTab("explorer")}
         title="Explorer"
       >
         <Folder size={18} />
@@ -620,7 +648,7 @@
         class="activity-item {$workspaceStore.activeSidebarTab === 'search'
           ? 'active'
           : ''}"
-        on:click={() => actions.setActiveSidebarTab("search")}
+        onclick={() => actions.setActiveSidebarTab("search")}
         title="Search"
       >
         <Search size={18} />
@@ -631,7 +659,7 @@
         class="activity-item {$workspaceStore.activeSidebarTab === 'git'
           ? 'active'
           : ''}"
-        on:click={() => actions.setActiveSidebarTab("git")}
+        onclick={() => actions.setActiveSidebarTab("git")}
         title="Source Control"
       >
         <GitBranch size={18} />
@@ -642,7 +670,7 @@
         class="activity-item {$workspaceStore.activeSidebarTab === 'debug'
           ? 'active'
           : ''}"
-        on:click={() => actions.setActiveSidebarTab("debug")}
+        onclick={() => actions.setActiveSidebarTab("debug")}
         title="Run & Debug"
       >
         <Bug size={18} />
@@ -653,7 +681,7 @@
         class="activity-item {$workspaceStore.activeSidebarTab === 'rag'
           ? 'active'
           : ''}"
-        on:click={() => actions.setActiveSidebarTab("rag")}
+        onclick={() => actions.setActiveSidebarTab("rag")}
         title="RAG Knowledge Docs"
       >
         <Database size={18} />
@@ -664,7 +692,7 @@
         class="activity-item {$workspaceStore.activeSidebarTab === 'boards'
           ? 'active'
           : ''}"
-        on:click={() => actions.setActiveSidebarTab("boards")}
+        onclick={() => actions.setActiveSidebarTab("boards")}
         title="Target Config"
       >
         <Settings size={18} />
@@ -672,7 +700,7 @@
     </nav>
 
     <!-- Sidebar Panel Column -->
-    <aside class="sidebar-panel" style="width: {sidebarWidth}px;">
+    <aside class="workspace-panel sidebar-panel" style="width: {sidebarWidth}px;">
       {#if $workspaceStore.activeSidebarTab === "explorer"}
         <div class="panel-header">
           <div class="panel-title">PROJECT EXPLORER</div>
@@ -699,7 +727,7 @@
                 <!-- svelte-ignore a11y-no-static-element-interactions -->
                 <div
                   class="file-item folder"
-                  on:click={() => (showConfigurator = !showConfigurator)}
+                  onclick={() => (showConfigurator = !showConfigurator)}
                 >
                   <Blocks size={14} style="color: var(--accent-violet);" />
                   <span>Embedded Configurator</span>
@@ -725,7 +753,7 @@
                               child.path
                                 ? 'active'
                                 : ''}"
-                              on:click={() => actions.setActiveFile(child.path)}
+                              onclick={() => actions.setActiveFile(child.path)}
                             >
                               <FileCode
                                 size={14}
@@ -741,7 +769,7 @@
                       <!-- svelte-ignore a11y-no-static-element-interactions -->
                       <div
                         class="file-item {render.isActive ? 'active' : ''}"
-                        on:click={() => actions.setActiveFile(render.item.path)}
+                        onclick={() => actions.setActiveFile(render.item.path)}
                       >
                         <File size={14} style="color: var(--text-muted);" />
                         <span>{render.item.name}</span>
@@ -760,7 +788,7 @@
               <button
                 type="button"
                 class="quick-access-item"
-                on:click={() => actions.setActiveSidebarTab("rag")}
+                onclick={() => actions.setActiveSidebarTab("rag")}
                 style="cursor: pointer; display: flex; align-items: center; justify-content: space-between;"
               >
                 <span
@@ -893,7 +921,7 @@
               <select
                 class="config-select"
                 value={$workspaceStore.selectedBoard}
-                on:change={(e) =>
+                onchange={(e) =>
                   actions.setSelectedBoard(e.currentTarget.value as any)}
               >
                 <option value="STM32F401">STM32F401 (Cortex-M4)</option>
@@ -907,7 +935,7 @@
               <select
                 class="config-select"
                 value={$workspaceStore.selectedProbe}
-                on:change={(e) =>
+                onchange={(e) =>
                   actions.setSelectedProbe(e.currentTarget.value as any)}
               >
                 <option value="ST-Link V2">ST-Link V2 (SWD)</option>
@@ -923,12 +951,12 @@
                   type="text"
                   class="config-input"
                   value={$workspaceStore.toolchainPath}
-                  on:change={(e) =>
+                  onchange={(e) =>
                     actions.setToolchainPath(e.currentTarget.value)}
                 />
                 <button
                   class="browse-btn"
-                  on:click={() =>
+                  onclick={() =>
                     actions.setToolchainPath("/usr/bin/arm-none-eabi-gcc")}
                   >Reset</button
                 >
@@ -943,19 +971,16 @@
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
       class="resize-handle vertical-handle"
-      on:mousedown={() => (isDraggingLeft = true)}
+      onmousedown={() => { isDraggingLeft = true; document.body.classList.add('dragging-col'); }}
       style="left: {sidebarWidth + 52}px;"
     ></div>
 
     <!-- Center Workspace Area (Editor + Bottom Drawer) -->
-    <main class="center-editor-panel">
+    <main class="center-editor-panel editor-container">
       <!-- Editor Frame -->
-      <section
-        class="monaco-editor-frame"
-        style="bottom: {bottomDrawerHeight}px;"
-      >
+      <section class="monaco-editor-frame">
         <!-- Editor Header Tab bar -->
-        <div class="editor-tabs-bar">
+        <div class="editor-tabs">
           {#if $workspaceStore.activeFile}
             <div class="editor-tab active">
               <FileCode size={12} style="color: var(--accent-violet-hover);" />
@@ -964,13 +989,13 @@
               <!-- svelte-ignore a11y-no-static-element-interactions -->
               <span
                 class="close-tab"
-                on:click={() => actions.setActiveFile(null)}>×</span
+                onclick={() => actions.setActiveFile(null)}>×</span
               >
             </div>
           {/if}
           <button
             class="configurator-toggle-tab"
-            on:click={() => (showConfigurator = !showConfigurator)}
+            onclick={() => (showConfigurator = !showConfigurator)}
           >
             <Sliders size={11} style="color: var(--text-muted);" />
             <span
@@ -983,8 +1008,8 @@
 
         <!-- Active Editor Display -->
         <div
-          class="editor-container-wrapper"
-          style="display: {showConfigurator ? 'none' : 'block'};"
+          class="monaco-editor-wrapper"
+          class:hidden={showConfigurator}
         >
           <div class="monaco-container" bind:this={editorEl}></div>
 
@@ -1001,7 +1026,7 @@
                   Pointer PC: 0x08001A4E)</span
                 >
               </div>
-              <button class="crash-resolve-btn" on:click={actions.resolveCrash}>
+              <button class="crash-resolve-btn" onclick={actions.resolveCrash}>
                 <Sparkles size={13} />
                 Apply AI Hotpatch Fix
               </button>
@@ -1025,77 +1050,87 @@
         {/if}
       </section>
 
-      <!-- Bottom Drawer Resizer Handle -->
+      <!-- Bottom Drawer Resizer Handle (inline flex child, sits between editor and terminal) -->
       <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <div
-        class="resize-handle horizontal-handle"
-        on:mousedown={() => (isDraggingBottom = true)}
-        style="bottom: {bottomDrawerHeight}px;"
-      ></div>
+      {#if terminalOpen}
+        <div
+          class="resize-handle horizontal-handle"
+          onmousedown={() => { isDraggingBottom = true; document.body.classList.add('dragging-row'); }}
+        ></div>
+      {/if}
 
       <!-- Bottom Drawer Frame -->
-      <footer
-        class="bottom-drawer-frame"
-        style="height: {bottomDrawerHeight}px;"
-      >
-        <!-- Tabs bar -->
-        <div class="drawer-tabs-bar">
-          <button
-            class="drawer-tab {$workspaceStore.activeBottomTab === 'terminal'
-              ? 'active'
-              : ''}"
-            on:click={() => actions.setBottomTab("terminal")}
-          >
-            <span>SERIAL TERMINAL</span>
-          </button>
-          <button
-            class="drawer-tab {$workspaceStore.activeBottomTab === 'plotter'
-              ? 'active'
-              : ''}"
-            on:click={() => actions.setBottomTab("plotter")}
-          >
-            <span>TELEMETRY PLOTTER</span>
-          </button>
-          <button
-            class="drawer-tab {$workspaceStore.activeBottomTab === 'registers'
-              ? 'active'
-              : ''}"
-            on:click={() => actions.setBottomTab("registers")}
-          >
-            <span>SFR REGISTERS</span>
-          </button>
-          <button
-            class="drawer-tab {$workspaceStore.activeBottomTab === 'emulation'
-              ? 'active'
-              : ''}"
-            on:click={() => actions.setBottomTab("emulation")}
-          >
-            <span>HARDWARE EMULATION</span>
-          </button>
-          <button
-            class="drawer-tab {$workspaceStore.activeBottomTab === 'memory'
-              ? 'active'
-              : ''}"
-            on:click={() => actions.setBottomTab("memory")}
-          >
-            <span>BUILD OUTPUT</span>
-          </button>
-        </div>
+      {#if terminalOpen}
+        <footer
+          class="helix-bottom-drawer"
+          style="height: {bottomDrawerHeight}px;"
+        >
+          <!-- Tabs bar -->
+          <div class="drawer-tabs">
+            <div class="tab-group">
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'terminal'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("terminal")}
+              >
+                <span>SERIAL TERMINAL</span>
+              </button>
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'plotter'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("plotter")}
+              >
+                <span>TELEMETRY PLOTTER</span>
+              </button>
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'registers'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("registers")}
+              >
+                <span>SFR REGISTERS</span>
+              </button>
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'emulation'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("emulation")}
+              >
+                <span>HARDWARE EMULATION</span>
+              </button>
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'memory'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("memory")}
+              >
+                <span>BUILD OUTPUT</span>
+              </button>
+            </div>
+            <div style="margin-left: auto; display: flex; align-items: center; padding-right: 10px;">
+              <button class="close-ai-btn" type="button" onclick={() => (terminalOpen = false)} title="Minimize Terminal">
+                <X size={13} />
+              </button>
+            </div>
+          </div>
 
         <!-- Active tab view -->
-        <div class="drawer-contents-wrapper">
+        <div class="drawer-content">
           {#if $workspaceStore.activeBottomTab === "terminal"}
-            <div class="serial-terminal-view">
-              <div class="terminal-logs">
+            <div class="serial-panel">
+              <div class="terminal-scroll">
                 {#each $workspaceStore.serialLogs as log}
-                  <div class="term-line">{log}</div>
+                  <div class="terminal-line">{log}</div>
                 {/each}
                 <div bind:this={terminalEndRef}></div>
               </div>
-              <form class="terminal-input-bar" on:submit={handleSerialSend}>
+              <form class="terminal-input-bar" onsubmit={handleSerialSend}>
                 <span class="prompt">COM4 &gt;</span>
                 <input
                   type="text"
+                  class="terminal-input"
                   placeholder="Send serial bytes to MCU..."
                   bind:value={serialInput}
                 />
@@ -1105,7 +1140,7 @@
           {/if}
 
           {#if $workspaceStore.activeBottomTab === "plotter"}
-            <div class="telemetry-plotter-view">
+            <div class="plotter-panel">
               <div class="plot-stats-overlay">
                 <div class="stat-lbl">
                   <span class="stat-dot temp"></span>TEMP:
@@ -1126,53 +1161,48 @@
                   >
                 </div>
               </div>
-              <canvas bind:this={canvasEl} class="telemetry-canvas"></canvas>
+              <div class="plotter-canvas-container">
+                <canvas bind:this={canvasEl} class="telemetry-canvas"></canvas>
+              </div>
             </div>
           {/if}
 
           {#if $workspaceStore.activeBottomTab === "registers"}
-            <div class="sfr-registers-view">
-              <div class="sfr-periph-col">
+            <div class="registers-panel">
+              <div class="peripheral-list">
                 {#each $workspaceStore.registers as reg}
                   <!-- svelte-ignore a11y-click-events-have-key-events -->
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
                   <div
-                    class="periph-item {selectedPeripheral === reg.name
+                    class="peripheral-item {selectedPeripheral === reg.name
                       ? 'active'
                       : ''}"
-                    on:click={() => (selectedPeripheral = reg.name)}
+                    onclick={() => (selectedPeripheral = reg.name)}
                   >
-                    <Cpu size={12} style="color: var(--accent-violet);" />
-                    <span>{reg.name}</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <Cpu size={12} style="color: var(--accent-violet);" />
+                      <span>{reg.name}</span>
+                    </div>
+                    <span class="peripheral-address">{reg.value}</span>
                   </div>
                 {/each}
               </div>
 
-              <div class="sfr-details-col">
+              <div class="register-details-grid">
                 {#each $workspaceStore.registers as reg}
                   {#if selectedPeripheral === reg.name}
-                    <div class="sfr-details-header">
-                      <h4>{reg.name} <span>({reg.description})</span></h4>
-                      <span class="reg-base-val">{reg.value}</span>
-                    </div>
-                    <div class="sfr-bits-list">
-                      <div class="sfr-bits-header">
-                        <span>Register</span>
-                        <span>Value</span>
-                        <span>Range</span>
-                        <span>Functional Description</span>
-                      </div>
-                      {#each reg.bits || [] as bit}
-                        <div class="sfr-bit-row">
-                          <span class="bit-name">{bit.name}</span>
-                          <span class="bit-val"
-                            >0x{bit.value.toString(16).toUpperCase()}</span
-                          >
-                          <span class="bit-range">{bit.range}</span>
-                          <span class="bit-desc">{bit.description}</span>
+                    {#each reg.bits || [] as bit}
+                      <div class="register-row">
+                        <div class="register-row-header">
+                          <span class="register-name">{bit.name}</span>
+                          <span class="register-value">0x{bit.value.toString(16).toUpperCase()}</span>
                         </div>
-                      {/each}
-                    </div>
+                        <div class="register-desc">{bit.description}</div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.65rem; color: var(--text-dark); margin-top: 4px;">
+                          <span>Range: {bit.range}</span>
+                        </div>
+                      </div>
+                    {/each}
                   {/if}
                 {/each}
               </div>
@@ -1184,11 +1214,11 @@
           {/if}
 
           {#if $workspaceStore.activeBottomTab === "memory"}
-            <div class="serial-terminal-view">
-              <div class="terminal-logs" style="font-family: var(--font-mono);">
+            <div class="serial-panel">
+              <div class="terminal-scroll" style="font-family: var(--font-mono);">
                 {#each $workspaceStore.buildLogs as log}
                   <div
-                    class="term-line"
+                    class="terminal-line"
                     style="color: {log.includes('Successful')
                       ? 'var(--accent-success)'
                       : log.includes('Error')
@@ -1202,60 +1232,79 @@
             </div>
           {/if}
         </div>
-      </footer>
+        </footer>
+      {/if}
+
+      <!-- Terminal Toggle Pill -->
+      {#if !terminalOpen}
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="terminal-toggle-pill" onclick={() => (terminalOpen = true)}>
+          <Sliders size={12} />
+          <span>TERMINAL</span>
+        </div>
+      {/if}
     </main>
 
     <!-- Right Panel Resizer Handle -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div
-      class="resize-handle vertical-handle"
-      on:mousedown={() => (isDraggingRight = true)}
-      style="right: {rightSidebarWidth}px;"
-    ></div>
+    {#if aiOpen}
+      <div
+        class="resize-handle vertical-handle"
+        onmousedown={() => { isDraggingRight = true; document.body.classList.add('dragging-col'); }}
+        style="right: {rightSidebarWidth}px;"
+      ></div>
+    {/if}
 
     <!-- Right AI Panel Column -->
     <aside
-      class="right-ai-panel"
+      class="split-sidebar-right right-ai-panel"
       style="width: {rightSidebarWidth}px; display: {aiOpen ? 'flex' : 'none'};"
     >
-      <div class="ai-panel-header">
-        <div class="ai-title">
-          <Sparkles size={14} style="color: var(--accent-violet-hover);" />
-          <span>HARDCOREAI COPILOT</span>
+      <!-- Chat Header -->
+      <div class="ai-chat-header">
+        <div class="ai-chat-header-info">
+          <div class="ai-avatar-badge">
+            <Sparkles size={12} />
+          </div>
+          <div>
+            <div class="ai-chat-title">HARDCOREAI COPILOT</div>
+            <div class="ai-chat-subtitle">Embedded AI Assistant · Online</div>
+          </div>
         </div>
-        <button class="close-ai-btn" on:click={() => (aiOpen = false)}>
+        <button class="close-ai-btn" onclick={() => (aiOpen = false)} title="Minimize panel">
           <X size={13} />
         </button>
       </div>
 
       <!-- Chat messages view -->
-      <div class="ai-messages-container">
+      <div class="ai-copilot-chat-content">
         {#each $workspaceStore.aiMessages as msg}
-          <div class="chat-bubble-wrapper {msg.sender}">
-            <div class="chat-bubble">
-              <div class="bubble-header">
-                <span class="sender"
-                  >{msg.sender === "ai"
-                    ? "HARDCOREAI COPILOT"
-                    : "DEVELOPER"}</span
-                >
-                <span class="time">{msg.timestamp}</span>
+          <div class="chat-row {msg.sender}">
+            {#if msg.sender === 'ai'}
+              <div class="chat-avatar ai-avatar"><Sparkles size={9} /></div>
+            {:else}
+              <div class="chat-avatar user-avatar">DEV</div>
+            {/if}
+            <div class="chat-msg-block {msg.sender}">
+              <div class="chat-msg-meta">
+                <span class="chat-msg-sender">{msg.sender === 'ai' ? 'HARDCOREAI' : 'You'}</span>
+                <span class="chat-msg-time">{msg.timestamp}</span>
               </div>
-              <!-- Render markdown text formatting -->
-              <div class="bubble-text">
-                {#if msg.text.includes("```")}
-                  {@const parts = msg.text.split("```")}
+              <div class="chat-msg-bubble {msg.sender}">
+                {#if msg.text.includes('```')}
+                  {@const parts = msg.text.split('```')}
                   {#each parts as part, i}
                     {#if i % 2 === 0}
-                      <p style="margin: 0; white-space: pre-wrap;">{part}</p>
+                      {#if part.trim()}<p class="chat-msg-text">{part.trim()}</p>{/if}
                     {:else}
-                      {@const codeLines = part.split("\n")}
-                      {@const code = codeLines.slice(1).join("\n")}
+                      {@const codeLines = part.split('\n')}
+                      {@const code = codeLines.slice(1).join('\n')}
                       <pre class="chat-code-block"><code>{code}</code></pre>
                     {/if}
                   {/each}
                 {:else}
-                  <p style="margin: 0; white-space: pre-wrap;">{msg.text}</p>
+                  <p class="chat-msg-text">{msg.text}</p>
                 {/if}
               </div>
             </div>
@@ -1263,65 +1312,82 @@
         {/each}
 
         {#if $workspaceStore.aiWaiting}
-          <div class="chat-bubble-wrapper ai">
-            <div class="chat-bubble waiting">
-              <span class="dot"></span>
-              <span class="dot"></span>
-              <span class="dot"></span>
+          <div class="chat-row ai">
+            <div class="chat-avatar ai-avatar"><Sparkles size={9} /></div>
+            <div class="chat-msg-block ai">
+              <div class="chat-msg-meta">
+                <span class="chat-msg-sender">HARDCOREAI</span>
+              </div>
+              <div class="chat-msg-bubble ai waiting-bubble">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+              </div>
             </div>
           </div>
         {/if}
       </div>
 
       <!-- Input Box -->
-      <form class="ai-input-form" on:submit={handleAiSend}>
-        <input
-          type="text"
-          placeholder="Ask AI about register status, RAG, or fix code..."
-          bind:value={aiInput}
-        />
-        <button type="submit">
-          <Send size={12} />
-        </button>
-      </form>
+      <div class="chat-input-zone">
+        <form class="chat-input-form" onsubmit={handleAiSend}>
+          <input
+            type="text"
+            class="chat-input-field"
+            placeholder="Ask about registers, RAG docs, or request a code fix..."
+            bind:value={aiInput}
+          />
+          <button type="submit" class="chat-send-btn" disabled={!aiInput.trim()}>
+            <Send size={13} />
+          </button>
+        </form>
+        <div class="chat-input-hint">Press Enter to send · Shift+Enter for new line</div>
+      </div>
     </aside>
 
-    <!-- Tiny AI Toggle Pill on Right Border if Closed -->
+    <!-- AI Panel Collapsed Sidebar Strip -->
     {#if !aiOpen}
       <!-- svelte-ignore a11y-click-events-have-key-events -->
       <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <div class="ai-toggle-pill" on:click={() => (aiOpen = true)}>
-        <MessageSquare size={14} />
-        <span>COPILOT</span>
+      <div class="ai-collapsed-strip" onclick={() => (aiOpen = true)} title="Open AI Copilot">
+        <div class="ai-collapsed-icon"><Sparkles size={14} /></div>
+        <div class="ai-collapsed-label">AI COPILOT</div>
+        <div class="ai-collapsed-dot"></div>
       </div>
     {/if}
+    </div>
   {/if}
 </div>
 
 <style>
   /* Custom layouts specifically needed for Svelte overlays and resize indicators */
-  .resize-handle {
-    position: absolute;
-    z-index: 1000;
-    transition: background-color 0.2s ease;
-  }
-
-  .resize-handle:hover {
-    background-color: var(--accent-violet);
-  }
-
+  /* Vertical handles (left/right sidebars) remain absolute */
   .vertical-handle {
+    position: absolute;
     top: 50px;
     bottom: 0;
     width: 4px;
     cursor: col-resize;
+    z-index: 1000;
+    transition: background-color 0.2s ease;
   }
 
+  .vertical-handle:hover {
+    background-color: var(--accent-violet);
+  }
+
+  /* Horizontal handle (bottom terminal) is an inline flex child */
   .horizontal-handle {
-    left: 0;
-    right: 0;
+    width: 100%;
     height: 4px;
+    flex-shrink: 0;
     cursor: row-resize;
+    background-color: var(--border-color);
+    transition: background-color 0.2s ease;
+  }
+
+  .horizontal-handle:hover {
+    background-color: var(--accent-violet);
   }
 
   .crash-overlay {
@@ -1486,28 +1552,32 @@
     font-family: var(--font-mono);
   }
 
-  .ai-toggle-pill {
-    position: absolute;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%) rotate(-90deg) translateY(16px);
-    transform-origin: right center;
-    background: var(--accent-violet);
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-    color: white;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    font-size: 0.68rem;
-    font-weight: 600;
-    cursor: pointer;
-    z-index: 999;
-    box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
+  /* Typing indicator dots animation */
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--accent-violet);
+    animation: bounce 1.2s infinite ease-in-out;
+    display: inline-block;
   }
 
-  .ai-toggle-pill:hover {
-    background: var(--accent-violet-hover);
+  .dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+
+  @keyframes bounce {
+    0%, 80%, 100% {
+      transform: scale(0.6);
+      opacity: 0.5;
+    }
+    40% {
+      transform: scale(1);
+      opacity: 1;
+    }
   }
 </style>

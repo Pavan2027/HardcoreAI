@@ -235,7 +235,7 @@
       <span class="ec-board-chip">{selectedBoard}RETx</span>
     </div>
     <div class="ec-header-actions">
-      <button class="ec-icon-btn" on:click={onDetach} title={isDetached ? "Dock panel" : "Detach panel"}>
+      <button class="ec-icon-btn" onclick={onDetach} title={isDetached ? "Dock panel" : "Detach panel"}>
         {#if isDetached}
           <Zap size={12} />
         {:else}
@@ -245,7 +245,7 @@
       <button class="ec-icon-btn" title="Reset configuration">
         <RotateCcw size={12} />
       </button>
-      <button class="ec-icon-btn ec-close-btn" on:click={onClose} title="Close">
+      <button class="ec-icon-btn ec-close-btn" onclick={onClose} title="Close">
         <X size={13} />
       </button>
     </div>
@@ -256,7 +256,7 @@
     {#each TABS as tab}
       <button
         class="ec-tab {activeTab === tab ? 'ec-tab-active' : ''}"
-        on:click={() => activeTab = tab}
+        onclick={() => activeTab = tab}
       >
         {tab}
       </button>
@@ -280,7 +280,7 @@
                 <div 
                   class="ec-pin {pin.enabled ? 'active-pin' : ''}" 
                   style="background-color: {getPinColor(pin)}"
-                  on:click={() => openPinEditor(pin)}
+                  onclick={() => openPinEditor(pin)}
                   title="{pin.pin}: {pin.signal} ({pin.label})"
                 ></div>
               {/each}
@@ -294,7 +294,7 @@
                 <div 
                   class="ec-pin {pin.enabled ? 'active-pin' : ''}" 
                   style="background-color: {getPinColor(pin)}"
-                  on:click={() => openPinEditor(pin)}
+                  onclick={() => openPinEditor(pin)}
                   title="{pin.pin}: {pin.signal} ({pin.label})"
                 ></div>
               {/each}
@@ -308,7 +308,7 @@
                 <div 
                   class="ec-pin ec-pin-h {pin.enabled ? 'active-pin' : ''}" 
                   style="background-color: {getPinColor(pin)}"
-                  on:click={() => openPinEditor(pin)}
+                  onclick={() => openPinEditor(pin)}
                   title="{pin.pin}: {pin.signal} ({pin.label})"
                 ></div>
               {/each}
@@ -322,7 +322,7 @@
                 <div 
                   class="ec-pin ec-pin-h {pin.enabled ? 'active-pin' : ''}" 
                   style="background-color: {getPinColor(pin)}"
-                  on:click={() => openPinEditor(pin)}
+                  onclick={() => openPinEditor(pin)}
                   title="{pin.pin}: {pin.signal} ({pin.label})"
                 ></div>
               {/each}
@@ -362,7 +362,7 @@
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div 
             class="ec-pin-row {row.enabled ? 'assigned' : 'unassigned'}" 
-            on:click={() => openPinEditor(row)}
+            onclick={() => openPinEditor(row)}
             title="Edit configuration for {row.pin}"
             style="cursor: pointer;"
           >
@@ -427,7 +427,7 @@
             class="ec-search-input"
           />
           {#if searchQuery}
-            <button class="ec-search-clear" on:click={() => searchQuery = ""}>
+            <button class="ec-search-clear" onclick={() => searchQuery = ""}>
               <X size={10} />
             </button>
           {/if}
@@ -436,7 +436,7 @@
         <div class="ec-cat-list">
           {#each filteredCategories as cat}
             <div class="ec-cat-group">
-              <button class="ec-cat-header" on:click={() => toggleCategory(cat.id)}>
+              <button class="ec-cat-header" onclick={() => toggleCategory(cat.id)}>
                 <span class="ec-cat-icon"><svelte:component this={cat.icon} size={13} /></span>
                 <span class="ec-cat-label">{cat.label}</span>
                 {#if expandedCategories.has(cat.id)}
@@ -453,7 +453,7 @@
                     {@const isEnabled = cfg?.enabled ?? false}
                     <button
                       class="ec-child-item {selectedPeripheral === child.id ? 'ec-child-active' : ''}"
-                      on:click={() => selectedPeripheral = child.id}
+                      onclick={() => selectedPeripheral = child.id}
                     >
                       <span
                         class="ec-child-dot"
@@ -510,7 +510,7 @@
               <input
                 type="checkbox"
                 checked={selectedConfig.enabled}
-                on:change={() => togglePeripheral(selectedPeripheral)}
+                onchange={() => togglePeripheral(selectedPeripheral)}
                 style="display: none;"
               />
               <div class="ec-toggle-track {selectedConfig.enabled ? 'on' : ''}">
@@ -527,7 +527,7 @@
                   id={makeFieldId("Operating Mode")}
                   class="ec-param-select"
                   value={selectedConfig.mode ?? ""}
-                  on:change={e => updateParam(selectedPeripheral, "mode", e.currentTarget.value)}
+                  onchange={e => updateParam(selectedPeripheral, "mode", e.currentTarget.value)}
                 >
                   <option value={selectedConfig.mode ?? ""}>{selectedConfig.mode ?? "Default Mode"}</option>
                   <option value="Disabled">Disabled</option>
@@ -541,7 +541,7 @@
                     id={makeFieldId("GPIO Pin Speed")}
                     class="ec-param-select"
                     value={selectedConfig.speed}
-                    on:change={e => updateParam(selectedPeripheral, "speed", e.currentTarget.value)}
+                    onchange={e => updateParam(selectedPeripheral, "speed", e.currentTarget.value)}
                   >
                     {#each ["Low", "Medium", "High", "Very High"] as s}
                       <option value={s}>{s}</option>
@@ -557,7 +557,7 @@
                     id={makeFieldId("Internal Resistor")}
                     class="ec-param-select"
                     value={selectedConfig.pullResistor}
-                    on:change={e => updateParam(selectedPeripheral, "pullResistor", e.currentTarget.value)}
+                    onchange={e => updateParam(selectedPeripheral, "pullResistor", e.currentTarget.value)}
                   >
                     {#each ["No pull-up/down", "Pull-up", "Pull-down"] as p}
                       <option value={p}>{p}</option>
@@ -574,7 +574,7 @@
                       id={makeFieldId(key)}
                       class="ec-param-input"
                       value={val}
-                      on:change={e => updateParam(selectedPeripheral, key, e.currentTarget.value)}
+                      onchange={e => updateParam(selectedPeripheral, key, e.currentTarget.value)}
                     />
                   </div>
                 {/each}
@@ -632,14 +632,14 @@
 {#if editingPin}
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="ec-pin-modal-backdrop" on:click={() => editingPin = null}>
-    <div class="ec-pin-modal" on:click|stopPropagation>
+  <div class="ec-pin-modal-backdrop" onclick={() => editingPin = null}>
+    <div class="ec-pin-modal" onclick={(e) => e.stopPropagation()}>
       <div class="ec-pin-modal-header">
         <div class="title-with-pin">
           <span class="modal-pin-dot" style="background: {getPinColor(editingPin)}"></span>
           <h3>Configure Pin {editingPin.pin}</h3>
         </div>
-        <button class="close-modal-btn" on:click={() => editingPin = null}>
+        <button class="close-modal-btn" onclick={() => editingPin = null}>
           <X size={14} />
         </button>
       </div>
@@ -747,8 +747,8 @@
       </div>
 
       <div class="ec-pin-modal-footer">
-        <button class="cancel-btn" on:click={() => editingPin = null}>Cancel</button>
-        <button class="save-btn" on:click={savePinConfig}>Apply Configuration</button>
+        <button class="cancel-btn" onclick={() => editingPin = null}>Cancel</button>
+        <button class="save-btn" onclick={savePinConfig}>Apply Configuration</button>
       </div>
     </div>
   </div>
