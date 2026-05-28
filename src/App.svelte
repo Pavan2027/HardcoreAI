@@ -98,26 +98,33 @@
     }, 50);
   }
 
-  onMount(() => {
-    // Instantiate Monaco Editor
-    if (editorEl) {
-      monacoEditor = monaco.editor.create(editorEl, {
-        value: $workspaceStore.fileContents[$workspaceStore.activeFile || ""] || "",
-        language: "c",
-        theme: "vs-dark",
-        automaticLayout: true,
-        fontFamily: "JetBrains Mono",
-        fontSize: 13,
-        minimap: { enabled: false }
-      });
+  function initMonaco(node: HTMLElement) {
+    monacoEditor = monaco.editor.create(node, {
+      value: $workspaceStore.fileContents[$workspaceStore.activeFile || ""] || "",
+      language: "c",
+      theme: "vs-dark",
+      automaticLayout: true,
+      fontFamily: "JetBrains Mono",
+      fontSize: 13,
+      minimap: { enabled: false }
+    });
 
-      monacoEditor.onDidChangeModelContent(() => {
-        if ($workspaceStore.activeFile && monacoEditor) {
-          actions.updateFileContent($workspaceStore.activeFile, monacoEditor.getValue());
+    const disposable = monacoEditor.onDidChangeModelContent(() => {
+      if ($workspaceStore.activeFile && monacoEditor) {
+        actions.updateFileContent($workspaceStore.activeFile, monacoEditor.getValue());
+      }
+    });
+
+    return {
+      destroy() {
+        disposable.dispose();
+        if (monacoEditor) {
+          monacoEditor.dispose();
+          monacoEditor = null;
         }
-      });
-    }
-  });
+      }
+    };
+  }
 
   function drawCanvas() {
     if (!canvasEl) return;
@@ -386,9 +393,21 @@
 
       <!-- Quick Access Right -->
       <div class="tauri-controls-group">
-        <Search size={14} class="control-icon-btn" on:click={() => actions.setActiveSidebarTab("search")} />
-        <Settings size={14} class="control-icon-btn" on:click={() => showConfigurator = !showConfigurator} />
-        <Moon size={14} class="control-icon-btn" />
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="control-icon-btn" on:click={() => actions.setActiveSidebarTab("search")}>
+          <Search size={14} />
+        </div>
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="control-icon-btn" on:click={() => showConfigurator = !showConfigurator}>
+          <Settings size={14} />
+        </div>
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="control-icon-btn" on:click={() => alert('Theme toggle (Light Mode) is currently in development!')}>
+          <Moon size={14} />
+        </div>
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <!-- svelte-ignore a11y-no-static-element-interactions -->
         <div class="control-icon-btn close-btn-highlight" on:click={() => actions.setShowWelcomeScreen(true)}>
@@ -726,7 +745,7 @@
 
           <!-- Active Editor Display -->
           <div class="editor-container-wrapper" style="display: {showConfigurator ? 'none' : 'block'};">
-            <div class="monaco-container" bind:this={editorEl}></div>
+            <div class="monaco-container" use:initMonaco></div>
             
             {#if $workspaceStore.crashed}
               <div class="crash-overlay">
@@ -915,7 +934,7 @@
                     {#each parts as part, i}
                       {#if i % 2 === 0}
                         <p style="margin: 0; white-space: pre-wrap;">{part}</p>
-                      {:else}
+                      {#else}
                         {@const codeLines = part.split("\n")}
                         {@const code = codeLines.slice(1).join("\n")}
                         <pre class="chat-code-block"><code>{code}</code></pre>
@@ -1152,24 +1171,100 @@
     position: absolute;
     right: 0;
     top: 50%;
-    transform: translateY(-50%) rotate(-90deg) translateY(16px);
-    transform-origin: right center;
+    transform: translateY(-50%);
     background: var(--accent-violet);
     border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border-bottom-left-radius: 6px;
     color: white;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: 12px;
+    padding: 12px 6px;
     font-size: 0.68rem;
     font-weight: 600;
     cursor: pointer;
     z-index: 999;
-    box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
+    box-shadow: -4px 0 10px rgba(0, 0, 0, 0.3);
+  }
+  .ai-toggle-pill span {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
   }
 
   .ai-toggle-pill:hover {
     background: var(--accent-violet-hover);
+  }
+  .sidebar-search-panel input:focus,
+  .sidebar-git-panel input:focus,
+  .boards-config-panel .config-input:focus,
+  .boards-config-panel .config-select:focus {
+    border-color: var(--accent-violet);
+    outline: none;
+  }
+
+  .git-commit-btn,
+  .boards-config-panel .browse-btn {
+    width: 100%;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-active);
+    font-size: 0.72rem;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-weight: 600;
+  }
+
+  .boards-config-panel .browse-btn {
+    width: auto;
+    margin-bottom: 8px;
+  }
+
+  .git-commit-btn:hover,
+  .boards-config-panel .browse-btn:hover {
+    background-color: var(--border-color);
+    color: var(--text-active);
+  }
+
+  .terminal-input-bar,
+  .ai-input-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .close-ai-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s ease;
+  }
+  
+  .close-ai-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-active);
+  }
+  .ai-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .ai-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-active);
   }
 </style>
