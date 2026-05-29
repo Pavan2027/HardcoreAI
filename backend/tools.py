@@ -170,6 +170,27 @@ class Toolbox:
         )
         return f"{self._describe_component(c)}\nPins:\n{pins}"
 
+    @tool
+    def search_hardware_manuals(self, query: str) -> str:
+        """Search the user's uploaded reference manuals and datasheets for hardware information."""
+        if not self.user_id or not self.project_id:
+            return "ERROR: user_id or project_id is not set. Cannot access the project knowledge base."
+        from rag_service import RAGService
+        try:
+            svc = RAGService(user_id=str(self.user_id), project_id=str(self.project_id))
+            result = svc.query(query)
+            if result.get("returncode") != 0:
+                err = result.get('stderr', '').strip()
+                if "no such table: chunks" in err:
+                    return "No documents have been uploaded to the hardware manual database yet."
+                return f"ERROR: RAG query failed: {err}"
+            context = result.get("context", "")
+            if not isinstance(context, str) or not context.strip():
+                return "No relevant information found in the uploaded manuals."
+            return context.strip()
+        except Exception as e:
+            return f"ERROR: Failed to search manuals: {e}"
+
 
 # ---------------------------------------------------------------------------
 # Phase 1 — WIRING toolbox
@@ -410,24 +431,6 @@ class CodingToolbox(Toolbox):
         lines = [f"  {endpoint(w['from'])} <-> {endpoint(w['to'])}" for w in wires]
         return f"Netlist ({len(wires)} connections):\n" + "\n".join(lines)
 
-    @tool
-    def search_hardware_manuals(self, query: str) -> str:
-        """Search the user's uploaded reference manuals and datasheets for hardware information."""
-        if not self.user_id or not self.project_id:
-            return "ERROR: user_id or project_id is not set. Cannot access the project knowledge base."
-        from rag_service import RAGService
-        try:
-            svc = RAGService(user_id=str(self.user_id), project_id=str(self.project_id))
-            result = svc.query(query)
-            if result.get("returncode") != 0:
-                err = result.get('stderr', '').strip()
-                return f"ERROR: RAG query failed: {err}. The manual database is currently unavailable (FTS5 module missing). Please use your general knowledge to infer the pins (e.g., standard STM32 UART pins like PA9/PA10) and proceed immediately to complete your task."
-            context = result.get("context", "")
-            if not isinstance(context, str) or not context.strip():
-                return "No relevant information found in the uploaded manuals. Please use your general knowledge to proceed."
-            return context.strip()
-        except Exception as e:
-            return f"ERROR: Failed to search manuals: {e}. Please use your general knowledge to proceed."
 
 
 # ---------------------------------------------------------------------------

@@ -33,6 +33,10 @@ func Open(dbPath string, vecExtPath string) (*DB, error) {
 		return nil, fmt.Errorf("storage.Open: failed to set WAL mode: %w", err)
 	}
 
+	if _, err := db.Exec("PRAGMA busy_timeout=5000;"); err != nil {
+		return nil, fmt.Errorf("storage.Open: failed to set busy_timeout: %w", err)
+	}
+
 	if _, err := db.Exec("PRAGMA foreign_keys=ON;"); err != nil {
 		return nil, fmt.Errorf("storage.Open: failed to enable foreign keys: %w", err)
 	}

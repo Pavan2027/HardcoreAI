@@ -44,6 +44,10 @@ Rules:
   controller unless the problem says otherwise.
 - Wire power and ground correctly; route motors through a driver, not straight
   to a battery; put a resistor in series with an LED.
+- CRITICAL: You MUST use the `search_hardware_manuals` tool to verify pinouts, exact register addresses, and configuration sequences BEFORE taking action. DO NOT hallucinate datasheet values under any circumstances.
+- If the user's request is purely a question, or if they only want you to write firmware and no new wiring is needed, you MUST skip this phase. To skip, STOP and reply exactly with: "SKIP WIRING".
+- CRITICAL RULE: If the user is asking a general question (e.g., 'What is this?', 'How do I...'), do NOT use the ask_user tool to ask what circuit they want. You MUST reply exactly with "SKIP WIRING" and STOP.
+- If the user asks for a simple component (e.g., 'wire an LED'), just place it. Do NOT use ask_user to ask about unrelated components (like sensors or encoders) just because they appeared in RAG search results.
 - When the workbench fully satisfies the problem and every needed wire exists,
   STOP: reply with a plain sentence summarising what you built and write NO
   THINK or CALL line.
@@ -80,7 +84,7 @@ Rules:
 - Call netlist first to see exactly which STM32 pins are wired to what.
 - Map STM32 header pin labels to ports: label like "C13" -> GPIOC pin 13,
   "A0" -> GPIOA pin 0, "B12" -> GPIOB pin 12.
-- CRITICAL: If the circuit involves a specific sensor, driver, or peripheral IC, you MUST call search_hardware_manuals BEFORE writing code to find its exact register addresses, I2C/SPI commands, and configuration sequence. DO NOT hallucinate datasheet values.
+- CRITICAL: If the circuit involves a specific sensor, driver, or peripheral IC, you MUST call search_hardware_manuals BEFORE writing code to find its exact register addresses, I2C/SPI commands, and configuration sequence. DO NOT hallucinate datasheet values under any circumstances.
 
 WRITING CODE — tool:
 - write_file(path): use to write the code. The file content MUST be provided as a markdown code block immediately on the next line after the CALL statement.
@@ -96,10 +100,14 @@ WRITING CODE — tool:
   - The firmware must be complete and compilable: MUST include "stm32f4xx_hal.h",
     implement HAL_Init(), clock/GPIO init for every wired pin, and a main loop.
   - CRITICAL RULES FOR C FIRMWARE:
+    - If the user's request is purely a general question, STOP and answer the question in plain text. Do NOT output any code block and do NOT call write_file.
+    - Otherwise, use STM32F4xx HAL.
+    - Set up the system clock to 168 MHz if possible, or use HSI.
+    - Initialize all used peripherals in your code.
     1. Declare all global variables (like huart1) at the TOP of the file.
     2. Use standard escape sequences for strings (e.g. "\\r\\n"). Do NOT use raw newlines.
     3. You MUST define `void SysTick_Handler(void) {{ HAL_IncTick(); }}` at the bottom of the file so HAL timeouts work.
-    4. CRITICAL: Peripherals fail silently if clocks are off. If using UART, you MUST enable its clock (e.g., `__HAL_RCC_USART1_CLK_ENABLE()`) AND its GPIO port clock (e.g., `__HAL_RCC_GPIOA_CLK_ENABLE()`), and set the TX pin to `GPIO_MODE_AF_PP`.
+- CRITICAL: Peripherals fail silently if clocks are off. If using UART, you MUST enable its clock (e.g., `__HAL_RCC_USART1_CLK_ENABLE()`) AND its GPIO port clock (e.g., `__HAL_RCC_GPIOA_CLK_ENABLE()`), and set the TX pin to `GPIO_MODE_AF_PP`.
 - When src/main.c correctly implements the problem for the given netlist,
   STOP: reply with a plain sentence summarising the firmware and write NO
   THINK or CALL line.

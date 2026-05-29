@@ -1260,7 +1260,7 @@ async def list_documents(project_id: str, user_id: str = Depends(get_current_use
     svc = RAGService(user_id=user_id, project_id=project_id)
     if not svc.config.data_dir.exists():
         return {"documents": []}
-    files = [f.name for f in svc.config.data_dir.iterdir() if f.is_file()]
+    files = [{"name": f.name, "size": f.stat().st_size} for f in svc.config.data_dir.iterdir() if f.is_file()]
     return {"documents": files}
 
 class RagQueryRequest(BaseModel):

@@ -13,7 +13,9 @@ if (-not (Test-Path $RootEnvExample)) {
 }
 
 Write-Host "Building rag-cli into integration/rag-cli.exe"
-go build -tags "sqlite_fts5" -o (Join-Path $IntegrationDir "rag-cli.exe") (Join-Path $RootDir "cmd/rag-cli/main.go")
+Push-Location $RootDir
+go run build.go
+Pop-Location
 
 Write-Host ""
 Write-Host "Setup complete."
