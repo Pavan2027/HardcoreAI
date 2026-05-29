@@ -357,6 +357,22 @@
       };
     }
   }
+
+  // Local state for tracking selections in chat dialogues
+  let chatRadioSelections: Record<string, string> = {};
+  let chatCheckboxSelections: Record<string, string[]> = {};
+  let chatDropdownSelections: Record<string, string> = {};
+  
+  // Project Renaming State
+  let editingProjectNameId: string | null = null;
+  let renamingName = "";
+
+  function focusElement(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  $: activeProject = $workspaceStore.projectsList.find(p => p.id === $workspaceStore.activeProjectId);
 </script>
 
 <svelte:window onmousemove={handleMouseMove} onmouseup={handleMouseUp} />
@@ -770,27 +786,96 @@
     <!-- Sidebar Panel Column -->
     <aside class="workspace-panel sidebar-panel" style="width: {sidebarWidth}px;">
       {#if $workspaceStore.activeSidebarTab === "explorer"}
-        <div class="panel-header">
-          <div class="panel-title">PROJECT EXPLORER</div>
-          <div class="pane-header-actions" style="display: flex; gap: 6px;">
-            <Plus
-              size={13}
-              style="cursor: pointer; color: var(--text-muted);"
-              onclick={() => {
-                const name = prompt("Enter file name (e.g. src/main.c):");
-                if (name) actions.createFile(name);
-              }}
-              title="New File"
-            />
-            <FolderOpen
-              size={12}
-              style="cursor: pointer; color: var(--text-muted);"
-              onclick={() => {
-                const name = prompt("Enter folder name:");
-                if (name) actions.createFolder(name);
-              }}
-              title="New Folder"
-            />
+        <div class="panel-header" style="height: auto; padding: 10px 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--border-color);">
+          {#if $workspaceStore.activeProjectId && activeProject}
+            <div class="active-project-manager" style="display: flex; align-items: center; justify-content: space-between; width: 100%; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 4px;">
+              {#if editingProjectNameId === $workspaceStore.activeProjectId}
+                <input 
+                  type="text" 
+                  class="project-rename-input"
+                  bind:value={renamingName}
+                  onkeydown={async (e) => {
+                    if (e.key === "Enter") {
+                      const val = renamingName.trim();
+                      if (val) {
+                        await actions.renameProject($workspaceStore.activeProjectId!, val);
+                      }
+                      editingProjectNameId = null;
+                    } else if (e.key === "Escape") {
+                      editingProjectNameId = null;
+                    }
+                  }}
+                  onblur={async () => {
+                    const val = renamingName.trim();
+                    if (val) {
+                      await actions.renameProject($workspaceStore.activeProjectId!, val);
+                    }
+                    editingProjectNameId = null;
+                  }}
+                  use:focusElement
+                />
+              {:else}
+                <!-- svelte-ignore a11y-click-events-have-key-events -->
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
+                <div 
+                  class="project-title-clickable" 
+                  title="Click to rename project"
+                  onclick={() => {
+                    editingProjectNameId = $workspaceStore.activeProjectId;
+                    renamingName = activeProject.name;
+                  }}
+                  style="font-size: 0.72rem; font-weight: 700; color: var(--text-active); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; cursor: pointer; display: flex; align-items: center; gap: 6px;"
+                >
+                  <Cpu size={12} style="color: var(--accent-violet);" />
+                  <span>{activeProject.name}</span>
+                </div>
+              {/if}
+              
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <button 
+                  class="project-control-btn" 
+                  title="Rename Project"
+                  onclick={() => {
+                    editingProjectNameId = $workspaceStore.activeProjectId;
+                    renamingName = activeProject.name;
+                  }}
+                >
+                  <Sliders size={12} />
+                </button>
+                <button 
+                  class="project-control-btn delete-hover" 
+                  title="Delete Project"
+                  onclick={async () => {
+                    await actions.deleteActiveProject($workspaceStore.activeProjectId!);
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+          {/if}
+          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+            <div class="panel-title">PROJECT EXPLORER</div>
+            <div class="pane-header-actions" style="display: flex; gap: 6px;">
+              <Plus
+                size={13}
+                style="cursor: pointer; color: var(--text-muted);"
+                onclick={() => {
+                  const name = prompt("Enter file name (e.g. src/main.c):");
+                  if (name) actions.createFile(name);
+                }}
+                title="New File"
+              />
+              <FolderOpen
+                size={12}
+                style="cursor: pointer; color: var(--text-muted);"
+                onclick={() => {
+                  const name = prompt("Enter folder name:");
+                  if (name) actions.createFolder(name);
+                }}
+                title="New Folder"
+              />
+            </div>
           </div>
         </div>
 
@@ -1372,9 +1457,20 @@
             <div class="ai-chat-subtitle">Embedded AI Assistant · Online</div>
           </div>
         </div>
-        <button class="close-ai-btn" onclick={() => (aiOpen = false)} title="Minimize panel">
-          <X size={13} />
-        </button>
+        <div style="display: flex; gap: 6px;">
+          {#if $workspaceStore.activeProjectId}
+            <button 
+              class="close-ai-btn" 
+              onclick={() => actions.clearChat($workspaceStore.activeProjectId!)} 
+              title="Clear Conversation History"
+            >
+              <Trash2 size={13} />
+            </button>
+          {/if}
+          <button class="close-ai-btn" onclick={() => (aiOpen = false)} title="Minimize panel">
+            <X size={13} />
+          </button>
+        </div>
       </div>
 
       <!-- Chat messages view -->
@@ -1408,26 +1504,191 @@
                 {/if}
 
                 {#if msg.status === 'waiting_for_user' && msg.options && msg.options.length > 0}
-                  <div class="chat-options-container">
-                    {#each msg.options as option}
-                      <button class="chat-option-btn" onclick={() => actions.sendAiMessage(option)}>
-                        {option}
+                  {#if msg.inputType === 'radio'}
+                    <div class="chat-radio-list">
+                      {#each msg.options as option}
+                        <label class="chat-radio-item" class:disabled={msg.submitted}>
+                          <input 
+                            type="radio" 
+                            name="radio-{msg.id}" 
+                            value={option} 
+                            disabled={msg.submitted}
+                            checked={msg.submitted ? msg.selectedValue === option : chatRadioSelections[msg.id] === option}
+                            onchange={() => { if (!msg.submitted) chatRadioSelections[msg.id] = option; }}
+                          />
+                          <span class="custom-radio"></span>
+                          <span class="radio-label">{option}</span>
+                        </label>
+                      {/each}
+                    </div>
+                    {#if !msg.submitted}
+                      <button 
+                        class="chat-submit-choice-btn" 
+                        disabled={!chatRadioSelections[msg.id]}
+                        onclick={() => {
+                          const val = chatRadioSelections[msg.id];
+                          if (val) {
+                            msg.selectedValue = val;
+                            actions.sendAiMessage(val);
+                          }
+                        }}
+                      >
+                        Submit Choice
                       </button>
-                    {/each}
-                  </div>
+                    {:else}
+                      <div class="chat-submitted-badge">
+                        Submitted: <strong>{msg.selectedValue || chatRadioSelections[msg.id]}</strong>
+                      </div>
+                    {/if}
+                  {:else}
+                    {#if msg.inputType === 'checkbox'}
+                      <div class="chat-checkbox-list">
+                        {#each msg.options as option}
+                          {@const isChecked = msg.submitted 
+                            ? (Array.isArray(msg.selectedValue) ? msg.selectedValue.includes(option) : msg.selectedValue === option)
+                            : (chatCheckboxSelections[msg.id] || []).includes(option)}
+                          <label class="chat-checkbox-item" class:disabled={msg.submitted}>
+                            <input 
+                              type="checkbox" 
+                              value={option} 
+                              disabled={msg.submitted}
+                              checked={isChecked}
+                              onchange={(e) => {
+                                if (msg.submitted) return;
+                                const arr = chatCheckboxSelections[msg.id] || [];
+                                if (e.currentTarget.checked) {
+                                  chatCheckboxSelections[msg.id] = [...arr, option];
+                                } else {
+                                  chatCheckboxSelections[msg.id] = arr.filter(o => o !== option);
+                                }
+                              }}
+                            />
+                            <span class="custom-checkbox"></span>
+                            <span class="checkbox-label">{option}</span>
+                          </label>
+                        {/each}
+                      </div>
+                      {#if !msg.submitted}
+                        <button 
+                          class="chat-submit-choice-btn" 
+                          disabled={!(chatCheckboxSelections[msg.id] && chatCheckboxSelections[msg.id].length > 0)}
+                          onclick={() => {
+                            const val = chatCheckboxSelections[msg.id] || [];
+                            msg.selectedValue = val;
+                            actions.sendAiMessage(val.join(", "));
+                          }}
+                        >
+                          Submit Selection
+                        </button>
+                      {:else}
+                        <div class="chat-submitted-badge">
+                          Submitted: <strong>
+                            {Array.isArray(msg.selectedValue) ? msg.selectedValue.join(", ") : msg.selectedValue}
+                          </strong>
+                        </div>
+                      {/if}
+                    {:else}
+                      {#if msg.inputType === 'select'}
+                        <div class="chat-select-wrapper">
+                          <select 
+                            class="chat-select-dropdown"
+                            disabled={msg.submitted}
+                            value={msg.submitted ? msg.selectedValue : (chatDropdownSelections[msg.id] || "")}
+                            onchange={(e) => { if (!msg.submitted) chatDropdownSelections[msg.id] = e.currentTarget.value; }}
+                          >
+                            <option value="" disabled>-- Select Option --</option>
+                            {#each msg.options as option}
+                              <option value={option}>{option}</option>
+                            {/each}
+                          </select>
+                        </div>
+                        {#if !msg.submitted}
+                          <button 
+                            class="chat-submit-choice-btn" 
+                            disabled={!chatDropdownSelections[msg.id]}
+                            onclick={() => {
+                              const val = chatDropdownSelections[msg.id];
+                              if (val) {
+                                msg.selectedValue = val;
+                                actions.sendAiMessage(val);
+                              }
+                            }}
+                          >
+                            Submit Choice
+                          </button>
+                        {:else}
+                          <div class="chat-submitted-badge">
+                            Submitted: <strong>{msg.selectedValue || chatDropdownSelections[msg.id]}</strong>
+                          </div>
+                        {/if}
+                      {:else}
+                        <!-- inputType === 'buttons' or default fallback -->
+                        {#if !msg.submitted}
+                          <div class="chat-options-container">
+                            {#each msg.options as option}
+                              <button class="chat-option-btn" onclick={() => {
+                                msg.selectedValue = option;
+                                actions.sendAiMessage(option);
+                              }}>
+                                {option}
+                              </button>
+                            {/each}
+                          </div>
+                        {:else}
+                          <div class="chat-submitted-badge">
+                            Submitted: <strong>{msg.selectedValue}</strong>
+                          </div>
+                        {/if}
+                      {/if}
+                    {/if}
+                  {/if}
                 {/if}
 
                 {#if msg.status === 'waiting_for_approval'}
-                  {#if msg.plan}
-                    <div class="chat-plan-preview">
-                      <strong>Proposed Plan:</strong>
-                      <p>{msg.plan}</p>
+                  <div class="chat-approval-gate-card">
+                    <div class="approval-gate-header">
+                      <div class="approval-icon-pulse">
+                        <Sparkles size={14} />
+                      </div>
+                      <div class="approval-header-texts">
+                        <div class="approval-gate-title">PLAN APPROVAL REQUIRED</div>
+                        <div class="approval-gate-subtitle">Confirm plan to execute code updates</div>
+                      </div>
                     </div>
-                  {/if}
-                  <div class="chat-approval-container">
-                    <button class="chat-approve-btn" onclick={() => actions.sendAiMessage("APPROVE")}>
-                      Accept & Generate
-                    </button>
+                    
+                    {#if msg.plan}
+                      <div class="chat-plan-steps">
+                        {#each msg.plan.split('\n').filter(Boolean) as step}
+                          <div class="plan-step-item">
+                            <span class="plan-step-dot"></span>
+                            <span class="plan-step-text">{step}</span>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                    
+                    {#if !msg.submitted}
+                      <div class="chat-approval-actions">
+                        <button class="chat-approve-btn-premium" onclick={() => {
+                          msg.selectedValue = "APPROVED";
+                          actions.sendAiMessage("APPROVE");
+                        }}>
+                          Accept & Generate
+                        </button>
+                        <button class="chat-reject-btn" onclick={() => {
+                          aiInput = "Reject: I would like you to change...";
+                          const inp = document.querySelector(".chat-input-field") as HTMLInputElement;
+                          if (inp) inp.focus();
+                        }}>
+                          Reject & Revise
+                        </button>
+                      </div>
+                    {:else}
+                      <div class="chat-submitted-badge plan-approved">
+                        <span class="status-dot active"></span>
+                        <span>Plan Approved & Executed</span>
+                      </div>
+                    {/if}
                   </div>
                 {/if}
               </div>
