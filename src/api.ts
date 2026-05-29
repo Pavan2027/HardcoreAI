@@ -33,6 +33,62 @@ export const api = {
     return true;
   },
 
+  async renameProject(id: string, name: string) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/projects/${id}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer TEST_TOKEN" },
+        body: JSON.stringify({ name })
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn("Failed to rename project on backend, falling back to local rename", e);
+    }
+    return { id, name };
+  },
+
+  async getConversationHistory(projectId: string) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/projects/${projectId}/conversations`, {
+        headers: { "Authorization": "Bearer TEST_TOKEN" }
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn("Failed to fetch conversation history, falling back to localStorage", e);
+    }
+    const local = localStorage.getItem(`chat_history_${projectId}`);
+    return local ? JSON.parse(local) : [];
+  },
+
+  async saveConversationHistory(projectId: string, history: any[]) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/projects/${projectId}/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer TEST_TOKEN" },
+        body: JSON.stringify({ history })
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn("Failed to save conversation history, saving to localStorage", e);
+    }
+    localStorage.setItem(`chat_history_${projectId}`, JSON.stringify(history));
+    return history;
+  },
+
+  async deleteConversationHistory(projectId: string) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/projects/${projectId}/conversations`, {
+        method: "DELETE",
+        headers: { "Authorization": "Bearer TEST_TOKEN" }
+      });
+      if (res.ok) return true;
+    } catch (e) {
+      console.warn("Failed to delete conversation history, clearing localStorage", e);
+    }
+    localStorage.removeItem(`chat_history_${projectId}`);
+    return true;
+  },
+
   async getProjectFiles(id: string) {
     const res = await fetch(`${BACKEND_URL}/api/projects/${id}/files`, { headers: { "Authorization": "Bearer TEST_TOKEN" } });
     if (!res.ok) throw new Error(await res.text());

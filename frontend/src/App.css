@@ -2299,3 +2299,345 @@ body.dragging-col {
   cursor: col-resize !important;
   user-select: none !important;
 }
+
+/* Interactive Agent Dialogues Styles */
+.chat-radio-list, .chat-checkbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.chat-radio-item, .chat-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.chat-radio-item:hover:not(.disabled), .chat-checkbox-item:hover:not(.disabled) {
+  background: rgba(139, 92, 246, 0.04);
+  border-color: rgba(139, 92, 246, 0.3);
+  color: var(--text-active);
+}
+
+.chat-radio-item.disabled, .chat-checkbox-item.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Custom inputs styling */
+.chat-radio-item input[type="radio"],
+.chat-checkbox-item input[type="checkbox"] {
+  display: none;
+}
+
+.custom-radio {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--text-dark);
+  border-radius: 50%;
+  display: inline-block;
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.chat-radio-item input[type="radio"]:checked + .custom-radio {
+  border-color: var(--accent-violet);
+  background: var(--accent-violet);
+}
+
+.chat-radio-item input[type="radio"]:checked + .custom-radio::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--bg-primary);
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.custom-checkbox {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--text-dark);
+  border-radius: 3px;
+  display: inline-block;
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.chat-checkbox-item input[type="checkbox"]:checked + .custom-checkbox {
+  border-color: var(--accent-violet);
+  background: var(--accent-violet);
+}
+
+.chat-checkbox-item input[type="checkbox"]:checked + .custom-checkbox::after {
+  content: "✓";
+  position: absolute;
+  color: var(--text-active);
+  font-size: 10px;
+  font-weight: bold;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Dropdown styling */
+.chat-select-wrapper {
+  margin: 10px 0;
+}
+
+.chat-select-dropdown {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-active);
+  font-size: 0.76rem;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chat-select-dropdown:focus:not(:disabled) {
+  border-color: var(--accent-violet);
+  box-shadow: 0 0 0 2px var(--accent-violet-muted);
+}
+
+.chat-select-dropdown:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Action submit choice button */
+.chat-submit-choice-btn {
+  background: var(--accent-violet);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  margin-top: 4px;
+  box-shadow: 0 4px 10px rgba(139, 92, 246, 0.15);
+}
+
+.chat-submit-choice-btn:hover:not(:disabled) {
+  background: var(--accent-violet-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.25);
+}
+
+.chat-submit-choice-btn:disabled {
+  background: var(--border-color);
+  color: var(--text-dark);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.chat-submitted-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  color: var(--text-dark);
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.01);
+  border-left: 2px solid var(--accent-violet);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.chat-submitted-badge.plan-approved {
+  border-left-color: var(--accent-success);
+  color: var(--accent-success);
+  background: rgba(16, 185, 129, 0.04);
+  font-weight: 600;
+}
+
+/* Premium plan approval gate card */
+.chat-approval-gate-card {
+  background: linear-gradient(135deg, rgba(20, 15, 30, 0.9) 0%, rgba(10, 10, 15, 0.9) 100%);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-top: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.approval-gate-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.approval-icon-pulse {
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--accent-violet-hover);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  animation: pulseGlowViolet 2s infinite alternate;
+}
+
+@keyframes pulseGlowViolet {
+  from {
+    box-shadow: 0 0 5px rgba(139, 92, 246, 0.3);
+  }
+  to {
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.6);
+  }
+}
+
+.approval-header-texts {
+  display: flex;
+  flex-direction: column;
+}
+
+.approval-gate-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: var(--accent-violet-hover);
+}
+
+.approval-gate-subtitle {
+  font-size: 0.62rem;
+  color: var(--text-dark);
+}
+
+.chat-plan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.plan-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.plan-step-dot {
+  width: 5px;
+  height: 5px;
+  background-color: var(--accent-violet);
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.plan-step-text {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.chat-approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-approve-btn-premium {
+  flex: 1.5;
+  background: linear-gradient(135deg, var(--accent-violet) 0%, #4F46E5 100%);
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+}
+
+.chat-approve-btn-premium:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4);
+}
+
+.chat-reject-btn {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chat-reject-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-active);
+  border-color: var(--text-dark);
+}
+
+/* Explorer sidebar active project manager and renaming inputs */
+.project-rename-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-violet);
+  border-radius: var(--radius-sm);
+  color: var(--text-active);
+  font-size: 0.72rem;
+  font-family: inherit;
+  padding: 2px 6px;
+  width: 120px;
+  outline: none;
+}
+
+.project-title-clickable:hover {
+  color: var(--accent-violet-hover) !important;
+}
+
+.project-control-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dark);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.project-control-btn:hover {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.project-control-btn.delete-hover:hover {
+  color: var(--accent-error);
+  background: rgba(239, 68, 68, 0.08);
+}
