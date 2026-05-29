@@ -775,10 +775,20 @@
             <Plus
               size={13}
               style="cursor: pointer; color: var(--text-muted);"
+              onclick={() => {
+                const name = prompt("Enter file name (e.g. src/main.c):");
+                if (name) actions.createFile(name);
+              }}
+              title="New File"
             />
             <FolderOpen
               size={12}
               style="cursor: pointer; color: var(--text-muted);"
+              onclick={() => {
+                const name = prompt("Enter folder name:");
+                if (name) actions.createFolder(name);
+              }}
+              title="New Folder"
             />
           </div>
         </div>
@@ -1395,6 +1405,30 @@
                 {:else}
                   <p class="chat-msg-text">{msg.text}</p>
                 {/if}
+
+                {#if msg.status === 'waiting_for_user' && msg.options && msg.options.length > 0}
+                  <div class="chat-options-container">
+                    {#each msg.options as option}
+                      <button class="chat-option-btn" onclick={() => actions.sendAiMessage(option)}>
+                        {option}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+
+                {#if msg.status === 'waiting_for_approval'}
+                  {#if msg.plan}
+                    <div class="chat-plan-preview">
+                      <strong>Proposed Plan:</strong>
+                      <p>{msg.plan}</p>
+                    </div>
+                  {/if}
+                  <div class="chat-approval-container">
+                    <button class="chat-approve-btn" onclick={() => actions.sendAiMessage("APPROVE")}>
+                      Accept & Generate
+                    </button>
+                  </div>
+                {/if}
               </div>
             </div>
           </div>
@@ -1668,5 +1702,61 @@
       transform: scale(1);
       opacity: 1;
     }
+  }
+  .chat-options-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .chat-option-btn {
+    background-color: var(--card-bg-light);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    text-align: left;
+    transition: all 0.2s ease;
+  }
+  .chat-option-btn:hover {
+    background-color: var(--primary-light);
+    border-color: var(--primary-color);
+  }
+  .chat-plan-preview {
+    background-color: var(--bg-dark);
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 10px;
+    font-size: 13px;
+    border-left: 3px solid var(--accent-orange);
+  }
+  .chat-plan-preview strong {
+    color: var(--accent-orange);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .chat-plan-preview p {
+    margin: 0;
+    color: var(--text-color-muted);
+  }
+  .chat-approval-container {
+    margin-top: 12px;
+  }
+  .chat-approve-btn {
+    background-color: var(--accent-orange);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    width: 100%;
+    transition: opacity 0.2s ease;
+  }
+  .chat-approve-btn:hover {
+    opacity: 0.9;
   }
 </style>

@@ -957,18 +957,25 @@ class AgentRequest(BaseModel):
 
     provider: str = "llamacpp"
     problem: str = ""
+    conversation_history: list[dict[str, Any]] | None = None
+    phase: str | None = None
 
 
 class PhaseTrace(BaseModel):
     phase: str
     steps: list[dict[str, Any]]
     final: str
+    status: str = "completed"
+    question: str = ""
+    options: list[str] = Field(default_factory=list)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentRunResult(BaseModel):
     provider: str
     wiring: PhaseTrace
     coding: PhaseTrace
+    debugging: PhaseTrace | None = None
     workbench: WorkbenchState
     files: list[CodeFileRead]
 
@@ -997,74 +1004,147 @@ async def agent_solve(project_id: str, payload: AgentRequest, user_id: str = Dep
     if payload.provider not in llm.PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unknown provider '{payload.provider}'.")
 
+    if payload.problem.strip() == "APPROVE" and payload.phase == "wiring":
+        # The user approved the wiring plan. Advance directly to coding phase.
+        payload.phase = "coding"
+
     with db_session(user_id) as session:
         project = get_project_or_404(session, project_id, user_id)
         catalogue = catalogue_index(session)
         state = read_workbench(session, project)
         workbench_dict = state.model_dump()
 
-    # --- Phase 1: wiring (isolated context) --------------------------------
-    try:
-        wiring_trace, wired = await run_wiring_phase(
-            provider=payload.provider,
-            project_id=project_id,
-            project_name=project.name,
-            problem=payload.problem,
-            catalogue=catalogue,
-            workbench=workbench_dict,
-            user_id=user_id,
-        )
-    except llm.LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"LLM error (wiring): {exc}")
+    original_problem = payload.problem
+    if payload.conversation_history and len(payload.conversation_history) > 0:
+        original_problem = payload.conversation_history[0].get("content", payload.problem)
 
-    # Persist the netlist the wiring phase produced.
-    with db_session(user_id) as session:
-        project = get_project_or_404(session, project_id, user_id)
-        write_workbench(session, project, WorkbenchState(**wired))
-        session.commit()
-        # Re-read so phase 2 (and the response) see canonical db ids.
-        project = get_project_or_404(session, project_id, user_id)
-        saved_state = read_workbench(session, project)
-        files_dict = _files_as_dict(session, project)
-        catalogue = catalogue_index(session)
+    # --- Phase 1: wiring (isolated context) --------------------------------
+    if payload.phase not in ("coding", "debugging"):
+        try:
+            wiring_trace, wired = await run_wiring_phase(
+                provider=payload.provider,
+                project_id=project_id,
+                project_name=project.name,
+                problem=original_problem,
+                catalogue=catalogue,
+                workbench=workbench_dict,
+                user_id=user_id,
+                messages=payload.conversation_history if payload.phase == "wiring" else None,
+            )
+        except llm.LLMError as exc:
+            raise HTTPException(status_code=502, detail=f"LLM error (wiring): {exc}")
+
+        # Persist the netlist the wiring phase produced.
+        with db_session(user_id) as session:
+            project = get_project_or_404(session, project_id, user_id)
+            write_workbench(session, project, WorkbenchState(**wired))
+            session.commit()
+            # Re-read so phase 2 (and the response) see canonical db ids.
+            project = get_project_or_404(session, project_id, user_id)
+            saved_state = read_workbench(session, project)
+            files_dict = _files_as_dict(session, project)
+            catalogue = catalogue_index(session)
+
+        # Early exit if waiting for user/approval
+        if wiring_trace.status in ("waiting_for_user", "waiting_for_approval"):
+            return AgentRunResult(
+                provider=payload.provider,
+                wiring=PhaseTrace(**wiring_trace.__dict__),
+                coding=PhaseTrace(phase="coding", steps=[], final=""),
+                workbench=saved_state,
+                files=[CodeFileRead(path=p, language=f["language"], content=f["content"]) for p, f in files_dict.items()]
+            )
+    else:
+        from agent import AgentTrace
+        wiring_trace = AgentTrace(phase="wiring", final="Skipped")
+        with db_session(user_id) as session:
+            project = get_project_or_404(session, project_id, user_id)
+            saved_state = read_workbench(session, project)
+            files_dict = _files_as_dict(session, project)
+            catalogue = catalogue_index(session)
 
     # --- Phase 2: coding (brand-new context) -------------------------------
     import copy
+    if payload.phase not in ("debugging",):
+        try:
+            coding_trace, new_files = await run_coding_phase(
+                provider=payload.provider,
+                project_name=project.name,
+                problem=original_problem,
+                catalogue=catalogue,
+                workbench=saved_state.model_dump(),
+                files=copy.deepcopy(files_dict),
+                user_id=user_id,
+                project_id=project_id,
+                messages=payload.conversation_history if payload.phase == "coding" else None,
+            )
+        except llm.LLMError as exc:
+            raise HTTPException(status_code=502, detail=f"LLM error (coding): {exc}")
+
+        # Persist any files the coding phase wrote.
+        with db_session(user_id) as session:
+            project = get_project_or_404(session, project_id, user_id)
+            for path, meta in new_files.items():
+                if files_dict.get(path) == meta:
+                    continue  # unchanged — skip the write
+                code_file = session.exec(
+                    select(CodeFileRow).where(
+                        CodeFileRow.project_id == project.id, CodeFileRow.path == path
+                    )
+                ).first()
+                if not code_file:
+                    code_file = CodeFileRow(project_id=project.id, path=path)
+                code_file.language = meta.get("language", "c")
+                code_file.content = meta.get("content", "")
+                code_file.updated_at = now_utc()
+                session.add(code_file)
+            project.updated_at = now_utc()
+            session.add(project)
+            session.commit()
+
+            project = get_project_or_404(session, project_id, user_id)
+            saved_state = read_workbench(session, project)
+            files_dict = _files_as_dict(session, project)
+            
+        if coding_trace.status in ("waiting_for_user", "waiting_for_approval"):
+            return AgentRunResult(
+                provider=payload.provider,
+                wiring=PhaseTrace(**wiring_trace.__dict__),
+                coding=PhaseTrace(
+                    phase=coding_trace.phase,
+                    steps=coding_trace.steps,
+                    final=coding_trace.final,
+                    status=getattr(coding_trace, "status", "completed"),
+                    question=getattr(coding_trace, "question", ""),
+                    options=getattr(coding_trace, "options", []),
+                    messages=getattr(coding_trace, "messages", []),
+                ),
+                debugging=PhaseTrace(phase="debugging", steps=[], final=""),
+                workbench=saved_state,
+                files=[CodeFileRead(path=p, language=f["language"], content=f["content"]) for p, f in files_dict.items()]
+            )
+    else:
+        from agent import AgentTrace
+        coding_trace = AgentTrace(phase="coding", final="Skipped")
+        
+    # --- Phase 3: debugging -------------------------------
+    from solver import run_debugging_phase
     try:
-        coding_trace, new_files = await run_coding_phase(
+        debugging_trace, _ = await run_debugging_phase(
             provider=payload.provider,
             project_name=project.name,
-            problem=payload.problem,
+            problem=original_problem,
             catalogue=catalogue,
             workbench=saved_state.model_dump(),
             files=copy.deepcopy(files_dict),
             user_id=user_id,
             project_id=project_id,
+            messages=payload.conversation_history if payload.phase == "debugging" else None,
         )
     except llm.LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"LLM error (coding): {exc}")
+        raise HTTPException(status_code=502, detail=f"LLM error (debugging): {exc}")
 
-    # Persist any files the coding phase wrote.
     with db_session(user_id) as session:
-        project = get_project_or_404(session, project_id, user_id)
-        for path, meta in new_files.items():
-            if files_dict.get(path) == meta:
-                continue  # unchanged — skip the write
-            code_file = session.exec(
-                select(CodeFileRow).where(
-                    CodeFileRow.project_id == project.id, CodeFileRow.path == path
-                )
-            ).first()
-            if not code_file:
-                code_file = CodeFileRow(project_id=project.id, path=path)
-            code_file.language = meta.get("language", "c")
-            code_file.content = meta.get("content", "")
-            code_file.updated_at = now_utc()
-            session.add(code_file)
-        project.updated_at = now_utc()
-        session.add(project)
-        session.commit()
-
         project = get_project_or_404(session, project_id, user_id)
         final_state = read_workbench(session, project)
         final_files = session.exec(
@@ -1076,10 +1156,31 @@ async def agent_solve(project_id: str, payload: AgentRequest, user_id: str = Dep
     return AgentRunResult(
         provider=payload.provider,
         wiring=PhaseTrace(
-            phase=wiring_trace.phase, steps=wiring_trace.steps, final=wiring_trace.final
+            phase=wiring_trace.phase,
+            steps=wiring_trace.steps,
+            final=wiring_trace.final,
+            status=getattr(wiring_trace, "status", "completed"),
+            question=getattr(wiring_trace, "question", ""),
+            options=getattr(wiring_trace, "options", []),
+            messages=getattr(wiring_trace, "messages", []),
         ),
         coding=PhaseTrace(
-            phase=coding_trace.phase, steps=coding_trace.steps, final=coding_trace.final
+            phase=coding_trace.phase,
+            steps=coding_trace.steps,
+            final=coding_trace.final,
+            status=getattr(coding_trace, "status", "completed"),
+            question=getattr(coding_trace, "question", ""),
+            options=getattr(coding_trace, "options", []),
+            messages=getattr(coding_trace, "messages", []),
+        ),
+        debugging=PhaseTrace(
+            phase=debugging_trace.phase,
+            steps=debugging_trace.steps,
+            final=debugging_trace.final,
+            status=getattr(debugging_trace, "status", "completed"),
+            question=getattr(debugging_trace, "question", ""),
+            options=getattr(debugging_trace, "options", []),
+            messages=getattr(debugging_trace, "messages", []),
         ),
         workbench=final_state,
         files=[

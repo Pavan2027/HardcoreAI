@@ -120,6 +120,32 @@ circuit. Begin.
 """
 
 
+_DEBUGGING_SYSTEM = """\\
+You are an autonomous debugging agent for an embedded STM32 system.
+The firmware has just been written. Your job is to verify it works using the GDB emulator.
+
+You have these tools:
+{tools}
+
+PROTOCOL — to use a tool you MUST write exactly two lines:
+THINK: <one sentence: what you just learned and what you will do next>
+CALL tool_name("string arg", 123)
+
+Rules:
+- Always write THINK before every CALL. Never skip THINK.
+- You must call `build_and_run()` first to start the emulator.
+- Then call `connect_debugger()` to attach GDB.
+- You can use `step_debugger()` and `read_registers()` to verify the PC and other registers change as expected.
+- If everything looks good, STOP: reply with a plain sentence summarising the success.
+"""
+
+_DEBUGGING_USER = """\\
+PROBLEM STATEMENT:
+{problem}
+
+Verify the firmware behavior. Begin.
+"""
+
 def _summarise_workbench(workbench: dict) -> str:
     comps = workbench.get("placed_components", [])
     if not comps:
@@ -154,6 +180,7 @@ async def run_wiring_phase(
     catalogue: dict,
     workbench: dict,
     user_id: str,
+    messages: list[dict] | None = None,
 ) -> tuple[AgentTrace, dict]:
     """Run phase 1. Returns (trace, mutated-workbench)."""
     toolbox = WiringToolbox(
@@ -174,6 +201,7 @@ async def run_wiring_phase(
         phase="wiring",
         system_prompt=system,
         user_prompt=user,
+        messages=messages,
         toolbox=toolbox,
         complete_fn=partial(llm.complete, provider),
     )
@@ -182,7 +210,8 @@ async def run_wiring_phase(
 
 async def run_coding_phase(
     *, provider: str, project_name: str, problem: str, catalogue: dict,
-    workbench: dict, files: dict, user_id: str, project_id: str
+    workbench: dict, files: dict, user_id: str, project_id: str,
+    messages: list[dict] | None = None,
 ) -> tuple[AgentTrace, dict]:
     """Run phase 2. Returns (trace, mutated-files)."""
     toolbox = CodingToolbox(
@@ -204,6 +233,7 @@ async def run_coding_phase(
         phase="coding",
         system_prompt=system,
         user_prompt=user,
+        messages=messages,
         toolbox=toolbox,
         complete_fn=partial(llm.complete, provider),
     )
@@ -214,3 +244,31 @@ def _tool_block(toolbox) -> str:
     from agent import build_tool_block
 
     return build_tool_block(toolbox.specs())
+
+async def run_debugging_phase(
+    *, provider: str, project_name: str, problem: str, catalogue: dict,
+    workbench: dict, files: dict, user_id: str, project_id: str,
+    messages: list[dict] | None = None,
+) -> tuple[AgentTrace, dict]:
+    """Run phase 3 (Debugging). Returns (trace, files)."""
+    from tools import DebuggingToolbox
+    toolbox = DebuggingToolbox(
+        project_name=project_name,
+        problem=problem,
+        catalogue=catalogue,
+        workbench=workbench,
+        files=files,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    system = _DEBUGGING_SYSTEM.format(tools=_tool_block(toolbox))
+    user = _DEBUGGING_USER.format(problem=problem or "(none given)")
+    trace = await run_phase(
+        phase="debugging",
+        system_prompt=system,
+        user_prompt=user,
+        messages=messages,
+        toolbox=toolbox,
+        complete_fn=partial(llm.complete, provider),
+    )
+    return trace, toolbox.files

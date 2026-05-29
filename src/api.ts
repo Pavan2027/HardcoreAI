@@ -97,7 +97,7 @@ export const api = {
     return res.json();
   },
 
-  async askAgent(query: string) {
+  async askAgent(query: string, conversationHistory?: any[], phase?: string) {
     const res = await fetch(`${BACKEND_URL}/api/projects/${activeProjectId}/agent/solve`, {
       method: "POST",
       headers: {
@@ -105,8 +105,10 @@ export const api = {
         "Authorization": "Bearer TEST_TOKEN"
       },
       body: JSON.stringify({ 
-        provider: "openrouter",
-        problem: query 
+        provider: "ollama",
+        problem: query,
+        conversation_history: conversationHistory,
+        phase: phase
       })
     });
     if (!res.ok) throw new Error(await res.text());

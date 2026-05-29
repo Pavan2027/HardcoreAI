@@ -331,6 +331,10 @@ class AgentTrace:
     phase: str
     steps: list[dict] = field(default_factory=list)
     final: str = ""
+    status: str = "completed"
+    question: str = ""
+    options: list[str] = field(default_factory=list)
+    messages: list[dict] = field(default_factory=list)
 
     def log_think_call(self, step: int, thought: str, name: str, kwargs: dict, result: str) -> None:
         self.steps.append(
@@ -344,8 +348,9 @@ class AgentTrace:
 async def run_phase(
     *,
     phase: str,
-    system_prompt: str,
-    user_prompt: str,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    messages: list[dict] | None = None,
     toolbox: "Toolbox",
     complete_fn: Callable,
 ) -> AgentTrace:
@@ -356,10 +361,18 @@ async def run_phase(
     ends when the model emits a reply with no CALL, or the step cap is hit.
     """
     specs_by_name = {s.name: s for s in toolbox.specs()}
-    messages: list[dict] = [
+    if messages is None:
+        messages = []
+    else:
+        # Clone it so we don't mutate the caller's list
+        messages = list(messages)
+
+    # Always prepend system and user prompt so the LLM has context and tools
+    messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
-    ]
+    ] + messages
+        
     trace = AgentTrace(phase=phase)
 
     for step in range(MAX_STEPS):
@@ -399,9 +412,23 @@ async def run_phase(
         # side-channel attribute the toolbox exposes, so the tool signature
         # stays a plain method the C-style parser can describe.
         toolbox.call_body = body if spec.wants_body else ""
+        from tools import AskUserException, ProposePlanException
         try:
             result = spec.func(toolbox, **kwargs)
             result_str = str(result)
+        except AskUserException as exc:
+            trace.status = "waiting_for_user"
+            trace.question = exc.question
+            trace.options = exc.options
+            messages.append({"role": "assistant", "content": raw})
+            trace.messages = messages
+            return trace
+        except ProposePlanException as exc:
+            trace.status = "waiting_for_approval"
+            trace.final = exc.plan
+            messages.append({"role": "assistant", "content": raw})
+            trace.messages = messages
+            return trace
         except TypeError as exc:  # arity / signature mismatch from the model
             result_str = f"ERROR: bad arguments for {name}: {exc}"
         except Exception as exc:  # noqa: BLE001 — surface any tool failure to the model

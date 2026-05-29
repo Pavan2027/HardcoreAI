@@ -20,6 +20,19 @@ from typing import Any
 import editmatch
 from agent import ToolSpec, tool
 
+class AskUserException(Exception):
+    """Raised when the agent wants to ask the user a question."""
+    def __init__(self, question: str, options: list[str] = None):
+        super().__init__(question)
+        self.question = question
+        self.options = options or []
+
+class ProposePlanException(Exception):
+    """Raised when the agent proposes a plan for user approval."""
+    def __init__(self, plan: str):
+        super().__init__(plan)
+        self.plan = plan
+
 # ---------------------------------------------------------------------------
 # Base toolbox — shared inspection tools + the working workbench copy.
 # ---------------------------------------------------------------------------
@@ -102,6 +115,17 @@ class Toolbox:
         )
 
     # -- shared inspection tools ----------------------------------------
+
+    @tool
+    def ask_user(self, question: str, options: str = "") -> str:
+        """Pause execution and ask the user a clarifying question. Use this if the prompt is ambiguous. Options can be a comma-separated list of choices."""
+        opts = [o.strip() for o in options.split(",") if o.strip()]
+        raise AskUserException(question, opts)
+
+    @tool
+    def propose_plan(self, plan: str) -> str:
+        """Pause execution and present an implementation plan to the user for approval. Use this after reading the manual but before wiring or coding."""
+        raise ProposePlanException(plan)
 
     @tool
     def show_problem(self) -> str:
@@ -404,3 +428,77 @@ class CodingToolbox(Toolbox):
             return context.strip()
         except Exception as e:
             return f"ERROR: Failed to search manuals: {e}. Please use your general knowledge to proceed."
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — DEBUGGING toolbox
+# ---------------------------------------------------------------------------
+
+import httpx
+
+class DebuggingToolbox(Toolbox):
+    """Run the Go emulator to build, flash, and debug the STM32 code."""
+
+    def __init__(self, *args, **kwargs):
+        self.files = kwargs.pop("files", {})
+        super().__init__(*args, **kwargs)
+        self.emulator_url = "http://127.0.0.1:62019"
+
+    @tool
+    def build_and_run(self) -> str:
+        """Build the firmware from the current code files and run it in the emulator."""
+        pio_files = [{"path": p, "content": f["content"]} for p, f in self.files.items()]
+        if not any(f["path"] == "platformio.ini" for f in pio_files):
+            pio_files.append({
+                "path": "platformio.ini",
+                "content": "[env:disco_f100rb]\\nplatform = ststm32\\nboard = disco_f100rb\\nframework = stm32cube\\n"
+            })
+            
+        try:
+            resp = httpx.post(f"{self.emulator_url}/platformio/build", json={
+                "projectPath": "./Blinky",
+                "files": pio_files
+            }, timeout=30.0)
+            if resp.status_code != 200:
+                return f"ERROR: Build failed:\\n{resp.text}"
+                
+            # Now run it
+            resp_run = httpx.get(f"{self.emulator_url}/qemu/run", timeout=10.0)
+            if resp_run.status_code != 200:
+                return f"ERROR: Run failed:\\n{resp_run.text}"
+            return "Firmware built and QEMU is running. You can now connect the debugger."
+        except Exception as e:
+            return f"ERROR: {e}"
+
+    @tool
+    def connect_debugger(self) -> str:
+        """Connect GDB to the running emulator."""
+        try:
+            resp = httpx.get(f"{self.emulator_url}/debug/connect", timeout=10.0)
+            if resp.status_code != 200:
+                return f"ERROR: Connect failed:\\n{resp.text}"
+            return resp.text
+        except Exception as e:
+            return f"ERROR: {e}"
+
+    @tool
+    def read_registers(self) -> str:
+        """Read CPU registers (PC, SP, R0-R12, etc.)."""
+        try:
+            resp = httpx.get(f"{self.emulator_url}/debug/registers", timeout=5.0)
+            if resp.status_code != 200:
+                return f"ERROR: Failed to read registers:\\n{resp.text}"
+            return resp.text
+        except Exception as e:
+            return f"ERROR: {e}"
+
+    @tool
+    def step_debugger(self) -> str:
+        """Step the CPU by one instruction."""
+        try:
+            resp = httpx.get(f"{self.emulator_url}/debug/step", timeout=5.0)
+            if resp.status_code != 200:
+                return f"ERROR: Step failed:\\n{resp.text}"
+            return resp.text
+        except Exception as e:
+            return f"ERROR: {e}"
