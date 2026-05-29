@@ -28,10 +28,10 @@ class RAGConfig:
 
     @classmethod
     def from_env(cls) -> "RAGConfig":
-        cli_default = "bin/rag-cli.exe" if os.name == "nt" else "bin/rag-cli"
+        cli_default = "../rag/integration/rag-cli.exe" if os.name == "nt" else "../rag/integration/rag-cli"
         vec0 = os.getenv("RAG_VEC0_PATH", "").strip()
         return cls(
-            rag_cli_path=Path(os.getenv("RAG_CLI_PATH", cli_default)),
+            rag_cli_path=Path(os.getenv("RAG_CLI_PATH", cli_default)).resolve(),
             db_path=Path(os.getenv("RAG_DB_PATH", "data/rag.db")),
             data_dir=Path(os.getenv("RAG_DATA_DIR", "data")),
             upload_dir=Path(os.getenv("UPLOAD_DIR", "integration/uploads")),
@@ -52,15 +52,11 @@ class RAGService:
         project_id: str | None = None,
     ) -> None:
         self.config = config or RAGConfig.from_env()
-        if user_id and project_id:
-            base = Path("data/users") / str(user_id) / "projects" / str(project_id)
+        if user_id:
+            base = Path("data/users") / str(user_id)
             self.config.db_path = base / "rag.db"
             self.config.data_dir = base / "documents"
             self.config.upload_dir = base / "uploads"
-        elif user_id:
-            self.config.db_path = Path(f"data/users/{user_id}.db")
-            self.config.data_dir = Path(f"data/users/{user_id}_data")
-            self.config.upload_dir = Path(f"data/users/{user_id}_uploads")
 
     def health_check(self) -> dict[str, object]:
         cli_exists = self.config.rag_cli_path.exists()

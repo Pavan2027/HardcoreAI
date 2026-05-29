@@ -183,6 +183,9 @@ export const actions = {
         fileContents,
         activeFile: files.length > 0 ? "/" + files[0].path : null
       }));
+      
+      // Also fetch RAG documents for this project
+      await actions.fetchRagDocuments();
     } catch (e) {
       console.error("Failed to load project files", e);
     }
@@ -454,14 +457,19 @@ export const actions = {
       const res = await api.listRagDocuments();
       workspaceStore.update(s => ({
         ...s,
-        ragDocuments: res.documents.map((name: string) => ({
-          id: name,
-          name: name,
-          size: "Unknown",
-          chunks: 0,
-          status: "Ready in Database",
-          tokens: 0
-        }))
+        ragDocuments: res.documents.map((doc: any) => {
+          const name = typeof doc === "string" ? doc : doc.name;
+          const sizeBytes = typeof doc === "string" ? 0 : (doc.size || 0);
+          const sizeKb = sizeBytes > 0 ? (sizeBytes / 1024).toFixed(1) + " KB" : "Unknown";
+          return {
+            id: name,
+            name: name,
+            size: sizeKb,
+            chunks: 0,
+            status: "Ready in Database",
+            tokens: 0
+          };
+        })
       }));
     } catch (e) {
       console.error("Failed to fetch RAG docs", e);

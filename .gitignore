@@ -21,3 +21,7 @@ backend/test_*.py
 emulator-service/bin/
 emulator-service/*.exe
 emulator-service/emulator-service
+
+# --- RAG Integration (Go) ---
+rag/integration/*.exe
+rag/integration/rag-cli

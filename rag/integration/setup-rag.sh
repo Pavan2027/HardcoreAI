@@ -11,7 +11,8 @@ if [ ! -f "$ROOT_DIR/.env.example" ]; then
 fi
 
 echo "Building rag-cli into integration/rag-cli"
-go build -tags "sqlite_fts5" -o "$INTEGRATION_DIR/rag-cli" "$ROOT_DIR/cmd/rag-cli/main.go"
+cd "$ROOT_DIR"
+go run build.go
 
 cat <<'EOF'
 Setup complete.

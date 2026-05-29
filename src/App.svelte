@@ -674,6 +674,7 @@
             class="welcome-enter-btn"
             onclick={async () => {
               if (!$workspaceStore.activeProjectId) {
+                await actions.loadProjects();
                 if ($workspaceStore.projectsList.length > 0) {
                   await actions.loadProject($workspaceStore.projectsList[0].id);
                 } else {
