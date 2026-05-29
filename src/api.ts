@@ -105,7 +105,7 @@ export const api = {
         "Authorization": "Bearer TEST_TOKEN"
       },
       body: JSON.stringify({ 
-        provider: "ollama",
+        provider: "openrouter",
         problem: query 
       })
     });
