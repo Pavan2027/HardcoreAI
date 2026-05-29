@@ -20,6 +20,10 @@ export interface ChatMessage {
   sender: "user" | "ai";
   text: string;
   timestamp: string;
+  status?: string;
+  plan?: string;
+  options?: string[];
+  phase?: string;
 }
 
 export interface PlotDataPoint {
@@ -213,6 +217,48 @@ export const actions = {
       }, 800);
     }
   },
+  createFile: async (name: string, folderPath: string = "") => {
+    const fullPath = folderPath ? `/${folderPath}/${name}` : `/${name}`;
+    let projectId: string | null = null;
+    workspaceStore.update(s => {
+      projectId = s.activeProjectId;
+      if (s.fileContents[fullPath] !== undefined) return s; // already exists
+      return {
+        ...s,
+        fileContents: { ...s.fileContents, [fullPath]: "" },
+        activeFile: fullPath
+      };
+    });
+    if (projectId) {
+      try {
+        const relPath = fullPath.startsWith('/') ? fullPath.substring(1) : fullPath;
+        await api.upsertFile(projectId, relPath, "");
+        // Refresh the file tree
+        await actions.loadProjectFiles(projectId);
+      } catch (e) {
+        console.error("Failed to create file on backend", e);
+      }
+    }
+  },
+  
+  createFolder: async (name: string, folderPath: string = "") => {
+    // We don't have empty folders in this backend structure, 
+    // but we can create a dummy file to represent the folder, 
+    // e.g., folderName/.gitkeep
+    const dummyFile = folderPath ? `/${folderPath}/${name}/.gitkeep` : `/${name}/.gitkeep`;
+    let projectId: string | null = null;
+    workspaceStore.update(s => { projectId = s.activeProjectId; return s; });
+    if (projectId) {
+      try {
+        const relPath = dummyFile.startsWith('/') ? dummyFile.substring(1) : dummyFile;
+        await api.upsertFile(projectId, relPath, "");
+        await actions.loadProjectFiles(projectId);
+      } catch(e) {
+        console.error("Failed to create folder on backend", e);
+      }
+    }
+  },
+
   setCompiling: (val: boolean) => {
     workspaceStore.update(s => ({ ...s, isCompiling: val }));
   },
@@ -524,7 +570,26 @@ export const actions = {
     }));
       
     try {
-      const response = await api.askAgent(text);
+      let history: any[] = [];
+      let currentPhase: string | undefined = undefined;
+
+      workspaceStore.update(s => {
+        // Collect everything up to the current message (which was just added as 'user' above)
+        history = s.aiMessages.map(m => ({
+          role: m.sender === "ai" ? "assistant" : "user",
+          content: m.text
+        }));
+
+        // Find the last known phase from AI messages
+        const lastAiMsg = [...s.aiMessages].reverse().find(m => m.sender === "ai" && m.phase);
+        if (lastAiMsg) {
+          currentPhase = lastAiMsg.phase;
+        }
+
+        return s;
+      });
+
+      const response = await api.askAgent(text, history, currentPhase);
       
       let projectId: string | null = null;
       workspaceStore.update(s => {
@@ -536,19 +601,52 @@ export const actions = {
         await actions.loadProject(projectId);
       }
 
-      workspaceStore.update(s => ({
-        ...s,
-        aiMessages: [
-          ...s.aiMessages,
-          {
-            id: Math.random().toString(),
-            sender: "ai",
-            text: response.message || "I successfully completed your request.",
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      workspaceStore.update(s => {
+        let aiText = "I successfully completed your request.";
+        let newStatus = "completed";
+        let newPlan = undefined;
+        let newOptions: string[] | undefined = undefined;
+        let newPhase = undefined;
+
+        // Check if agent is waiting for user or approval
+        if (response.wiring?.status === "waiting_for_user" || response.wiring?.status === "waiting_for_approval") {
+          aiText = response.wiring.question || "I need more information.";
+          newStatus = response.wiring.status;
+          newOptions = response.wiring.options;
+          newPhase = response.wiring.phase;
+          if (newStatus === "waiting_for_approval") {
+             newPlan = response.wiring.final;
+             aiText = "Do you approve this plan?";
           }
-        ],
-        aiWaiting: false
-      }));
+        } else if (response.coding?.status === "waiting_for_user" || response.coding?.status === "waiting_for_approval") {
+          aiText = response.coding.question || "I need more information.";
+          newStatus = response.coding.status;
+          newOptions = response.coding.options;
+          newPhase = response.coding.phase;
+          if (newStatus === "waiting_for_approval") {
+             newPlan = response.coding.final;
+             aiText = "Do you approve this plan?";
+          }
+        }
+
+        return {
+          ...s,
+          aiMessages: [
+            ...s.aiMessages,
+            {
+              id: Math.random().toString(),
+              sender: "ai",
+              text: aiText,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              status: newStatus,
+              plan: newPlan,
+              options: newOptions,
+              phase: newPhase
+            }
+          ],
+          aiWaiting: false
+        };
+      });
     } catch (e: any) {
       workspaceStore.update(s => ({
         ...s,
