@@ -103,7 +103,7 @@ def _tokenize(args_str: str) -> list[Any]:
             if colon != -1:
                 key = raw[:colon].strip()
                 if key and " " not in key and not key[:1].isdigit():
-                    raw = raw[colon + 1:].strip().strip('"')
+                    raw = raw[colon + 1:].strip().strip('"').strip("'")
             tokens.append(_coerce(raw))
     return tokens
 
@@ -112,13 +112,18 @@ def _coerce(raw: str) -> Any:
     """Best-effort cast of a bare token to bool/int/float/None, else keep str."""
     if len(raw) >= 2 and raw[1] == ":" and raw[0] in "sifb":
         raw = raw[2:]  # strip type prefixes some models echo: s:foo i:5
+    
+    # Strip any enclosing quotes for string values
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1]
+        
     low = raw.lower()
-    if low == "true":
-        return True
-    if low in ("false",):
-        return False
     if low in ("null", "none"):
         return None
+    if low in ("false",):
+        return False
+    if low == "true":
+        return True
     try:
         return int(raw)
     except ValueError:
@@ -268,10 +273,7 @@ def parse_call(
     think_match = re.search(r"THINK:?\s*(.*)", pre_call, flags=re.IGNORECASE | re.DOTALL)
     thought = think_match.group(1).strip() if think_match else ""
 
-    try:
-        name, kwargs = _parse_one(call_str, specs_by_name)
-    except ParseError:
-        return None
+    name, kwargs = _parse_one(call_str, specs_by_name)
     
     return thought, name, kwargs, body
 
@@ -294,7 +296,7 @@ def _parse_one(
 
     spec = specs_by_name[name]
     if len(tokens) > len(spec.params):
-        raise ParseError(f"too many args for {name}")
+        tokens = tokens[:len(spec.params)]
     kwargs: dict[str, Any] = {}
     for (pname, ptype), value in zip(spec.params, tokens):
         kwargs[pname] = _cast(value, ptype)
@@ -363,8 +365,30 @@ async def run_phase(
     for step in range(MAX_STEPS):
         raw = await complete_fn(messages)
         print("RAW LLM OUTPUT:", repr(raw))
-        parsed = parse_call(raw, specs_by_name)
+        
+        try:
+            parsed = parse_call(raw, specs_by_name)
+        except ParseError as exc:
+            trace.log_think_call(step, "", "parse_error", {}, f"ERROR: {exc}")
+            messages.append({"role": "assistant", "content": raw})
+            messages.append({"role": "user", "content": f"TOOL RESULT: ParseError: {exc}. Ensure you format your tool call as CALL tool_name(args)."})
+            continue
 
+        if parsed is None:
+            # Fallback for models that output bare code blocks in the coding phase
+            if trace.phase == "coding":
+                import re
+                code_match = re.search(r"```[a-zA-Z]*\n(.*?)```", raw, flags=re.DOTALL)
+                if code_match and ("include" in raw.lower() or "stm32" in raw.lower()):
+                    parsed = ("", "write_file", {"path": "src/main.c"}, code_match.group(0))
+            
+            if parsed is None and trace.phase == "wiring":
+                if "```python" in raw.lower() or "```c" in raw.lower():
+                    trace.log_think_call(step, "", "parse_error", {}, "ERROR: Code blocks are not allowed in the wiring phase.")
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": "TOOL RESULT: ERROR: Do not write Python or C code. You must use the provided tools like CALL wire_pins(...) to wire the circuit. When you are completely done wiring, output a plain text summary without any code blocks."})
+                    continue
+                    
         if parsed is None:
             trace.final = raw.strip()
             return trace

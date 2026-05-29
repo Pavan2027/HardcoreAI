@@ -24,93 +24,23 @@
     }
   }
 
-  // Handle Emulation core cycle execution simulation
-  function startSimulationLoop() {
-    if (simulatedTimer) return;
-    
+  function handleStartEmulation() {
     actions.startEmulation();
-    
-    let cycleCount = 0;
-    const intervalTime = $workspaceStore.emulationFrequency === "1 Hz" ? 1000 
-                       : $workspaceStore.emulationFrequency === "10 Hz" ? 100 
-                       : $workspaceStore.emulationFrequency === "100 Hz" ? 10 
-                       : 50; // Faster update for kHz/MHz ranges
-                       
-    simulatedTimer = setInterval(() => {
-      cycleCount++;
-      
-      // Simulate program counter increment and register variations
-      const currentPC = parseInt($workspaceStore.registers[2].bits?.[2].value.toString() || "0", 16);
-      let nextPC = currentPC + 4;
-      if (nextPC > 0x08001F00) nextPC = 0x080010AC; // Reset program pointer
-      
-      // Update store PC register
-      workspaceStore.update(s => {
-        const updatedRegs = s.registers.map(reg => {
-          if (reg.name === "Core Registers") {
-            return {
-              ...reg,
-              bits: reg.bits?.map(bit => {
-                if (bit.name === "PC") return { ...bit, value: nextPC };
-                if (bit.name === "R1") return { ...bit, value: 0x20000400 + Math.floor(Math.random() * 16) };
-                return bit;
-              })
-            };
-          }
-          return reg;
-        });
-        
-        // Also simulate ADC conversion on top of updated registers
-        const updatedADC = updatedRegs.map(reg => {
-          if (reg.name === "ADC1") {
-            return {
-              ...reg,
-              bits: reg.bits?.map(bit => {
-                if (bit.name === "DR") return { ...bit, value: Math.floor(s.analogSensors.temp * 100) };
-                return bit;
-              })
-            };
-          }
-          return reg;
-        });
-
-        // Generate plotting dataset points dynamically
-        const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        const sensorPt = {
-          time,
-          temp: s.analogSensors.temp + (Math.random() - 0.5) * 0.1, // Feed slider with noise
-          voltage: s.analogSensors.voltage + (Math.random() - 0.5) * 0.01,
-          current: s.analogSensors.current + (Math.random() - 0.5) * 0.5
-        };
-
-        return {
-          ...s,
-          registers: updatedADC,
-          plotData: [...s.plotData.slice(-30), sensorPt], // keep last 30 points
-          serialLogs: [...s.serialLogs.slice(-50), `[SYS] cycle ${cycleCount} | PC: 0x${nextPC.toString(16).toUpperCase()} | TEMP: ${sensorPt.temp.toFixed(2)}°C`]
-        };
-      });
-
-      // Periodically append emulation diagnostic log
-      if (cycleCount % 20 === 0) {
-        actions.addEmulationLog(`Pipeline cycle ${cycleCount} complete. Floating Point Unit (FPU) ticks verified.`);
-      }
-      
-    }, intervalTime) as unknown as number;
   }
 
-  function stopSimulationLoop() {
-    if (simulatedTimer) {
-      clearInterval(simulatedTimer);
-      simulatedTimer = null;
-    }
+  function handleStopEmulation() {
     actions.stopEmulation();
   }
+
+  onDestroy(() => {
+    actions.stopEmulation();
+  });
 
   function handleStep() {
     // Manually step one program pointer instruction
     workspaceStore.update(s => {
-      const currentPC = parseInt(s.registers[2].bits?.[2].value.toString() || "0", 16);
+      const coreRegs = s.registers.find(r => r.name === "Core Registers");
+      const currentPC = parseInt(coreRegs?.bits?.find(b => b.name === "PC")?.value.toString() || "0", 16);
       const nextPC = currentPC + 4;
       const updatedRegs = s.registers.map(reg => {
         if (reg.name === "Core Registers") {
@@ -130,7 +60,7 @@
         registers: updatedRegs,
         emulationLogs: [
           ...s.emulationLogs,
-          `[EMU] [STEP] Executed 1 cycle. PC advanced to 0x${nextPC.toString(16).toUpperCase()}`
+          `[EMU] [STEP] Executed 1 cycle. PC advanced to 0x${nextPC.toString(16).toUpperCase().padStart(8, '0')}`
         ]
       };
     });
@@ -185,23 +115,23 @@
     <!-- Power & Execution buttons -->
     <div class="emu-buttons-grid">
       {#if !$workspaceStore.emulationRunning}
-        <button class="emu-btn play" on:click={startSimulationLoop} title="Run core simulation">
+        <button class="emu-btn play" onclick={handleStartEmulation} title="Run core simulation">
           <Play size={12} fill="currentColor" />
           <span>Start Emu</span>
         </button>
       {:else}
-        <button class="emu-btn stop" on:click={stopSimulationLoop} title="Pause core execution">
+        <button class="emu-btn stop" onclick={handleStopEmulation} title="Pause core execution">
           <Square size={12} fill="currentColor" />
           <span>Halt Emu</span>
         </button>
       {/if}
 
-      <button class="emu-btn step" on:click={handleStep} disabled={$workspaceStore.emulationRunning} title="Single-step instruction">
+      <button class="emu-btn step" onclick={handleStep} disabled={$workspaceStore.emulationRunning} title="Single-step instruction">
         <ArrowRight size={12} />
         <span>Step Cycle</span>
       </button>
 
-      <button class="emu-btn reset" on:click={handleReset} title="Hard reset virtual MCU core">
+      <button class="emu-btn reset" onclick={handleReset} title="Hard reset virtual MCU core">
         <RotateCcw size={12} />
         <span>System Reset</span>
       </button>
@@ -217,11 +147,11 @@
         id="freq-select" 
         class="emu-select"
         value={$workspaceStore.emulationFrequency}
-        on:change={e => {
+        onchange={e => {
           actions.changeEmulationFrequency(e.currentTarget.value as any);
           if ($workspaceStore.emulationRunning) {
-            stopSimulationLoop();
-            startSimulationLoop();
+            handleStopEmulation();
+            handleStartEmulation();
           }
         }}
       >
@@ -251,7 +181,7 @@
           max="80" 
           step="0.5" 
           value={$workspaceStore.analogSensors.temp}
-          on:input={e => updateSensorValue("temp", parseFloat(e.currentTarget.value))}
+          oninput={e => updateSensorValue("temp", parseFloat(e.currentTarget.value))}
           class="vertical-slider"
         />
         <span class="sensor-val temp">{$workspaceStore.analogSensors.temp.toFixed(1)}°C</span>
@@ -266,7 +196,7 @@
           max="3.6" 
           step="0.05" 
           value={$workspaceStore.analogSensors.voltage}
-          on:input={e => updateSensorValue("voltage", parseFloat(e.currentTarget.value))}
+          oninput={e => updateSensorValue("voltage", parseFloat(e.currentTarget.value))}
           class="vertical-slider"
         />
         <span class="sensor-val volt">{$workspaceStore.analogSensors.voltage.toFixed(2)}V</span>
@@ -281,7 +211,7 @@
           max="120" 
           step="1" 
           value={$workspaceStore.analogSensors.current}
-          on:input={e => updateSensorValue("current", parseFloat(e.currentTarget.value))}
+          oninput={e => updateSensorValue("current", parseFloat(e.currentTarget.value))}
           class="vertical-slider"
         />
         <span class="sensor-val curr">{$workspaceStore.analogSensors.current.toFixed(1)}mA</span>
@@ -312,7 +242,7 @@
 
     <!-- Registers Display Block -->
     <div class="emu-registers-grid">
-      {#each $workspaceStore.registers[2].bits || [] as reg}
+      {#each ($workspaceStore.registers.find(r => r.name === "Core Registers")?.bits) || [] as reg}
         <div class="emu-reg-card">
           <span class="reg-name">{reg.name}</span>
           <span class="reg-val">0x{reg.value.toString(16).toUpperCase().padStart(8, "0")}</span>

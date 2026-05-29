@@ -83,7 +83,14 @@ Rules:
 - CRITICAL: If the circuit involves a specific sensor, driver, or peripheral IC, you MUST call search_hardware_manuals BEFORE writing code to find its exact register addresses, I2C/SPI commands, and configuration sequence. DO NOT hallucinate datasheet values.
 
 WRITING CODE — tool:
-- write_file(path, content): use to write the code. The second argument is the whole file as one string. Use Python triple quotes for the string content (e.g. \"\"\"code\"\"\").
+- write_file(path): use to write the code. The file content MUST be provided as a markdown code block immediately on the next line after the CALL statement.
+
+  Example:
+  CALL write_file("src/main.c")
+  ```c
+  #include "stm32f4xx_hal.h"
+  // ... rest of the code
+  ```
   
   - The firmware MUST use the STM32 HAL framework. Do NOT use the legacy Standard Peripheral Library (SPL). Do NOT include "stm32f10x.h".
   - The firmware must be complete and compilable: MUST include "stm32f4xx_hal.h",

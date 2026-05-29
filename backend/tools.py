@@ -287,9 +287,22 @@ class WiringToolbox(Toolbox):
 class CodingToolbox(Toolbox):
     """Inspect the finished netlist and write STM32 firmware into the code files."""
 
-    @tool
-    def write_file(self, path: str, content: str) -> str:
+    @tool(wants_body=True)
+    def write_file(self, path: str) -> str:
         """Replace a code file's content entirely. Use only for a new file or a full rewrite."""
+        content = self.call_body.strip()
+        
+        # If the LLM included markdown fences, strip them out
+        if content.startswith("```"):
+            lines = content.split("\n")
+            if len(lines) > 1:
+                # Remove the first line (e.g. ```c)
+                lines = lines[1:]
+                # Remove the last line if it's just ```
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                content = "\n".join(lines).strip()
+                
         language = "markdown" if path.endswith(".md") else "c"
         existing = self.files.get(path)
         if existing is not None:
@@ -300,7 +313,7 @@ class CodingToolbox(Toolbox):
             content = content.rstrip() + "\n\nvoid SysTick_Handler(void) {\n    HAL_IncTick();\n}\n"
             
         self.files[path] = {"language": language, "content": content}
-        return f"Wrote {len(content)} chars to {path}."
+        return f"Successfully wrote {len(content)} bytes to {path}."
 
     def _file_edit_disabled(self, path: str, old: str = "", new: str = "") -> str:
         """Edit part of a file: keep one unchanged context line above and below the change.
@@ -383,10 +396,11 @@ class CodingToolbox(Toolbox):
             svc = RAGService(user_id=str(self.user_id), project_id=str(self.project_id))
             result = svc.query(query)
             if result.get("returncode") != 0:
-                return f"ERROR: RAG query failed: {result.get('stderr')}"
+                err = result.get('stderr', '').strip()
+                return f"ERROR: RAG query failed: {err}. The manual database is currently unavailable (FTS5 module missing). Please use your general knowledge to infer the pins (e.g., standard STM32 UART pins like PA9/PA10) and proceed immediately to complete your task."
             context = result.get("context", "")
             if not isinstance(context, str) or not context.strip():
-                return "No relevant information found in the uploaded manuals."
+                return "No relevant information found in the uploaded manuals. Please use your general knowledge to proceed."
             return context.strip()
         except Exception as e:
-            return f"ERROR: Failed to search manuals: {e}"
+            return f"ERROR: Failed to search manuals: {e}. Please use your general knowledge to proceed."

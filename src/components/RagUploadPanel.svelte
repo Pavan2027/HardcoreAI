@@ -43,7 +43,7 @@
 
   function uploadFiles(files: File[]) {
     files.forEach(file => {
-      actions.uploadDocument(file.name, file.size);
+      actions.uploadDocument(file);
     });
   }
 
@@ -80,15 +80,15 @@
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div 
       class="drag-drop-zone {isDragOver ? 'drag-over' : ''} {$workspaceStore.ragUploadProgress ? 'disabled' : ''}"
-      on:dragover={handleDragOver}
-      on:dragleave={handleDragLeave}
-      on:drop={handleDrop}
-      on:click={() => !$workspaceStore.ragUploadProgress && filesInput.click()}
+      ondragover={handleDragOver}
+      ondragleave={handleDragLeave}
+      ondrop={handleDrop}
+      onclick={() => !$workspaceStore.ragUploadProgress && filesInput.click()}
     >
       <input 
         type="file" 
         bind:this={filesInput} 
-        on:change={handleFileSelect} 
+        onchange={handleFileSelect} 
         style="display: none;" 
         multiple
         accept=".pdf,.txt,.c,.h,.cpp,.json"
@@ -148,7 +148,7 @@
           </div>
           <button 
             class="delete-doc-btn" 
-            on:click={() => deleteDoc(doc.id, doc.name)}
+            onclick={() => deleteDoc(doc.id, doc.name)}
             title="Remove document from AI workspace context"
           >
             <Trash2 size={12} />
@@ -176,10 +176,10 @@
         type="text" 
         placeholder="Type semantic query... (e.g. USART2 pin configurations)" 
         bind:value={queryText}
-        on:keypress={handleKeyPress}
+        onkeypress={handleKeyPress}
         class="semantic-input"
       />
-      <button class="search-action-btn" on:click={triggerSearch}>Retrieve</button>
+      <button class="search-action-btn" onclick={triggerSearch}>Retrieve</button>
     </div>
 
     <!-- Match Results Container -->
@@ -220,6 +220,7 @@
 <style>
   .rag-container {
     display: flex;
+    flex-direction: column;
     gap: 16px;
     height: 100%;
     width: 100%;
@@ -227,6 +228,8 @@
     color: var(--text-light);
     font-family: var(--font-sans);
     box-sizing: border-box;
+    overflow-y: auto;
+    padding: 8px;
   }
 
   .rag-upload-col {
@@ -506,10 +509,6 @@
     gap: 8px;
   }
 
-  .search-ico {
-    color: var(--text-dark);
-  }
-
   .semantic-input {
     background: none;
     border: none;
@@ -517,6 +516,7 @@
     font-family: var(--font-sans);
     font-size: 0.72rem;
     flex-grow: 1;
+    min-width: 0;
     outline: none;
   }
 

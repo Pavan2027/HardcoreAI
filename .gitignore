@@ -1,0 +1,23 @@
+# --- Frontend (Svelte/Vite) ---
+node_modules/
+dist/
+.svelte-kit/
+build/
+.env
+.env.local
+
+# --- Backend (Python FastAPI) ---
+backend/.env
+backend/.venv/
+backend/__pycache__/
+backend/*.pyc
+backend/.pytest_cache/
+backend/data/
+backend/bin/
+backend/projects.db
+backend/test_*.py
+
+# --- Emulator Service (Go) ---
+emulator-service/bin/
+emulator-service/*.exe
+emulator-service/emulator-service

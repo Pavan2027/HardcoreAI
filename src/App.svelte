@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { tick, onMount } from "svelte";
+  import { api } from "./api";
   import { workspaceStore, actions, type FileItem } from "./store";
   import * as monaco from "monaco-editor";
   import EmbeddedConfigurator from "./components/EmbeddedConfigurator.svelte";
   import EmulationPanel from "./components/EmulationPanel.svelte";
   import RagUploadPanel from "./components/RagUploadPanel.svelte";
-  
+
   import {
     Play,
     Zap,
@@ -29,8 +30,9 @@
     Moon,
     Cpu,
     Database,
-    MessageSquare,
-    Sliders
+    Sliders,
+    Trash2,
+    MonitorPlay,
   } from "lucide-svelte";
 
   let aiInput = "";
@@ -38,6 +40,7 @@
   let selectedPeripheral = "Core Registers";
   let aiOpen = true;
   let showConfigurator = false;
+  let terminalOpen = true;
 
   // Panel sizing
   let sidebarWidth = 260;
@@ -49,28 +52,58 @@
   let isDraggingBottom = false;
 
   // DOM Elements
-  let editorEl: HTMLDivElement;
   let canvasEl: HTMLCanvasElement;
   let terminalEndRef: HTMLDivElement;
   let monacoEditor: monaco.editor.IStandaloneCodeEditor | null = null;
 
-  
-  function handleMouseMove(e: MouseEvent) {
+  async function handleMouseMove(e: MouseEvent) {
     if (isDraggingLeft) {
       sidebarWidth = Math.max(180, Math.min(450, e.clientX - 52));
+      await tick();
+      window.requestAnimationFrame(() => {
+        if (monacoEditor) monacoEditor.layout();
+        resetEditorScroll();
+      });
     }
     if (isDraggingRight) {
-      rightSidebarWidth = Math.max(280, Math.min(600, window.innerWidth - e.clientX));
+      rightSidebarWidth = Math.max(
+        280,
+        Math.min(600, window.innerWidth - e.clientX),
+      );
+      await tick();
+      window.requestAnimationFrame(() => {
+        if (monacoEditor) monacoEditor.layout();
+        resetEditorScroll();
+      });
     }
     if (isDraggingBottom) {
-      bottomDrawerHeight = Math.max(120, Math.min(500, window.innerHeight - e.clientY));
+      bottomDrawerHeight = Math.max(
+        120,
+        Math.min(500, window.innerHeight - e.clientY),
+      );
+      await tick();
+      window.requestAnimationFrame(() => {
+        if (monacoEditor) monacoEditor.layout();
+        resetEditorScroll();
+      });
     }
+  }
+
+  function resetEditorScroll() {
+    const frame = document.querySelector(".monaco-editor-frame");
+    const wrapper = document.querySelector(".monaco-editor-wrapper");
+    const container = document.querySelector(".editor-container");
+    if (frame) frame.scrollTop = 0;
+    if (wrapper) wrapper.scrollTop = 0;
+    if (container) container.scrollTop = 0;
   }
 
   function handleMouseUp() {
     isDraggingLeft = false;
     isDraggingRight = false;
     isDraggingBottom = false;
+    document.body.classList.remove('dragging-row', 'dragging-col');
+    resetEditorScroll();
   }
 
   // Draw plot canvas reactively
@@ -80,6 +113,10 @@
     setTimeout(drawCanvas, 0);
   }
 
+  onMount(() => {
+    actions.loadProjects();
+  });
+
   // Synchronize Monaco editor contents with active file changes
   $: activeFile = $workspaceStore.activeFile;
   $: if (monacoEditor && activeFile) {
@@ -87,7 +124,10 @@
     if (monacoEditor.getValue() !== content) {
       monacoEditor.setValue(content);
       const isC = activeFile.endsWith(".c") || activeFile.endsWith(".h");
-      monaco.editor.setModelLanguage(monacoEditor.getModel()!, isC ? "c" : "javascript");
+      monaco.editor.setModelLanguage(
+        monacoEditor.getModel()!,
+        isC ? "c" : "javascript",
+      );
     }
   }
 
@@ -154,10 +194,14 @@
       ctx.stroke();
     }
 
-    if (plotData.length < 2) {
+    if ($workspaceStore.plotData.length < 2) {
       ctx.fillStyle = "#64748B";
       ctx.font = "11px Outfit";
-      ctx.fillText("Waiting for serial stream telemetry...", width / 2 - 100, height / 2);
+      ctx.fillText(
+        "Waiting for serial stream telemetry...",
+        width / 2 - 100,
+        height / 2,
+      );
       return;
     }
 
@@ -166,7 +210,7 @@
     const graphWidth = width - paddingLeft - 20;
     const graphHeight = height - paddingBottom - 10;
 
-    const temps = plotData.map((d) => d.temp);
+    const temps = $workspaceStore.plotData.map((d) => d.temp);
     const minTemp = Math.min(...temps) - 1;
     const maxTemp = Math.max(...temps) + 1;
     const tempRange = maxTemp - minTemp || 1;
@@ -176,9 +220,12 @@
     ctx.lineWidth = 2;
     ctx.beginPath();
 
-    plotData.forEach((pt, index) => {
-      const x = paddingLeft + (index / (plotData.length - 1)) * graphWidth;
-      const y = height - paddingBottom - ((pt.temp - minTemp) / tempRange) * graphHeight;
+    $workspaceStore.plotData.forEach((pt, index) => {
+      const x = paddingLeft + (index / ($workspaceStore.plotData.length - 1)) * graphWidth;
+      const y =
+        height -
+        paddingBottom -
+        ((pt.temp - minTemp) / tempRange) * graphHeight;
       if (index === 0) {
         ctx.moveTo(x, y);
       } else {
@@ -210,9 +257,13 @@
     actions.clearBuildLogs();
     actions.addBuildLog("HARDCOREAI Build Engine v1.0.0");
     actions.addBuildLog("Scanning active target configurations...");
-    actions.addBuildLog(`Found toolchain compiler: ${$workspaceStore.toolchainPath}`);
-    actions.addBuildLog(`Target architecture: ${$workspaceStore.selectedBoard === "STM32F401" ? "Cortex-M4" : "Xtensa LX7"}`);
-    
+    actions.addBuildLog(
+      `Found toolchain compiler: ${$workspaceStore.toolchainPath}`,
+    );
+    actions.addBuildLog(
+      `Target architecture: ${$workspaceStore.selectedBoard === "STM32F401" ? "Cortex-M4" : "Xtensa LX7"}`,
+    );
+
     setTimeout(() => {
       actions.addBuildLog("Compiling Core/Src/main.c...");
       actions.addBuildLog("Compiling Core/Src/stm32f4xx_it.c...");
@@ -225,7 +276,9 @@
       actions.addBuildLog("  FLASH:  26.4 KB / 256.0 KB (10.3%)");
       actions.addBuildLog("  SRAM:   12.1 KB /  64.0 KB (18.9%)");
       actions.addBuildLog("──────────────────────────────────────────");
-      actions.addBuildLog("Build Successful. Object binary generated: build/hardcoreai_app.bin");
+      actions.addBuildLog(
+        "Build Successful. Object binary generated: build/hardcoreai_app.bin",
+      );
       actions.setCompiling(false);
     }, 1500);
   }
@@ -234,8 +287,10 @@
     if ($workspaceStore.isFlashing) return;
     actions.setFlashing(true);
     actions.addBuildLog("Launching flashing target engine...");
-    actions.addBuildLog(`Flashing target via probe: ${$workspaceStore.selectedProbe}`);
-    
+    actions.addBuildLog(
+      `Flashing target via probe: ${$workspaceStore.selectedProbe}`,
+    );
+
     setTimeout(() => {
       actions.addBuildLog("Connection verified. Halting target core...");
       actions.addBuildLog("Erasing sectors... OK");
@@ -246,7 +301,9 @@
       actions.addBuildLog("Verifying integrity checksum... OK");
       actions.addBuildLog("Resetting target CPU core. Start execution...");
       actions.setFlashing(false);
-      actions.addSerialLog("[SYSTEM] Board reset. Flashed firmware execution initialized.");
+      actions.addSerialLog(
+        "[SYSTEM] Board reset. Flashed firmware execution initialized.",
+      );
     }, 1200);
   }
 
@@ -256,10 +313,14 @@
       actions.addBuildLog("Debugger disconnected.");
     } else {
       actions.addBuildLog("Launching GDB debug server...");
-      actions.addBuildLog(`Probe: ${$workspaceStore.selectedProbe} connected to target: ${$workspaceStore.selectedBoard}`);
+      actions.addBuildLog(
+        `Probe: ${$workspaceStore.selectedProbe} connected to target: ${$workspaceStore.selectedBoard}`,
+      );
       setTimeout(() => {
         actions.startDebugging();
-        actions.addBuildLog("Debugger successfully attached. Target halted at main() -> main.c:22");
+        actions.addBuildLog(
+          "Debugger successfully attached. Target halted at main() -> main.c:22",
+        );
       }, 800);
     }
   }
@@ -286,18 +347,19 @@
       return {
         isFolder: true,
         item,
-        children: item.children || []
+        children: item.children || [],
       };
     } else {
       return {
         isFolder: false,
         item,
-        isActive
+        isActive,
       };
     }
   }
 </script>
-<svelte:window on:mousemove={handleMouseMove} on:mouseup={handleMouseUp} />
+
+<svelte:window onmousemove={handleMouseMove} onmouseup={handleMouseUp} />
 <div class="helix-app">
   <!-- 1. Header Command Bar -->
   <header class="helix-header">
@@ -305,7 +367,10 @@
       <div class="logo-text">HARDCORE<span>AI</span></div>
       <!-- svelte-ignore a11y-click-events-have-key-events -->
       <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <div class="target-dropdown-pill" on:click={() => showConfigurator = !showConfigurator}>
+      <div
+        class="target-dropdown-pill"
+        onclick={() => (showConfigurator = !showConfigurator)}
+      >
         <span>Target: {$workspaceStore.selectedBoard}RETx</span>
         <ChevronDown size={11} class="target-dropdown-arrow" />
       </div>
@@ -315,19 +380,19 @@
     <div class="command-capsule">
       <button
         class="capsule-btn build"
-        on:click={handleBuild}
+        onclick={handleBuild}
         disabled={$workspaceStore.isCompiling || $workspaceStore.isFlashing}
         title="Compile Project"
       >
         <Play size={12} class="play-triangle-fill" />
         <span>{$workspaceStore.isCompiling ? "Compiling..." : "Build"}</span>
       </button>
-      
+
       <div class="divider-line"></div>
 
       <button
         class="capsule-btn flash"
-        on:click={handleFlash}
+        onclick={handleFlash}
         disabled={$workspaceStore.isCompiling || $workspaceStore.isFlashing}
         title="Flash to Device"
       >
@@ -338,18 +403,31 @@
       <div class="divider-line"></div>
 
       <button
-        class="capsule-btn debug {$workspaceStore.isDebugging ? ($workspaceStore.crashed ? 'active crashed' : 'active debug-running') : ''}"
-        on:click={handleDebugToggle}
+        class="capsule-btn debug {$workspaceStore.isDebugging
+          ? $workspaceStore.crashed
+            ? 'active crashed'
+            : 'active debug-running'
+          : ''}"
+        onclick={handleDebugToggle}
         title="Toggle Debugger (OpenOCD + GDB)"
       >
         <Bug size={12} />
-        <span>{$workspaceStore.isDebugging ? ($workspaceStore.crashed ? "CRASHED" : "Debug") : "Debug"}</span>
+        <span
+          >{$workspaceStore.isDebugging
+            ? $workspaceStore.crashed
+              ? "CRASHED"
+              : "Debug"
+            : "Debug"}</span
+        >
       </button>
 
       <div class="divider-line"></div>
-      
+
       <div class="capsule-more-options">
-        <MoreHorizontal size={13} style="color: var(--text-muted); cursor: pointer; padding: 0 4px;" />
+        <MoreHorizontal
+          size={13}
+          style="color: var(--text-muted); cursor: pointer; padding: 0 4px;"
+        />
       </div>
     </div>
 
@@ -357,35 +435,75 @@
     <div class="connection-status-group">
       <div class="connection-status">
         {#if $workspaceStore.isDebugging && !$workspaceStore.crashed}
-          <div class="command-capsule" style="background: rgba(6, 182, 212, 0.08); border-color: rgba(6, 182, 212, 0.3);">
-            <button class="capsule-btn" style="color: var(--accent-cyan); padding: 4px 8px;" on:click={actions.stepOver}>
+          <div
+            class="command-capsule"
+            style="background: rgba(6, 182, 212, 0.08); border-color: rgba(6, 182, 212, 0.3);"
+          >
+            <button
+              class="capsule-btn"
+              style="color: var(--accent-cyan); padding: 4px 8px;"
+              onclick={actions.stepOver}
+            >
               <span>Step Over</span>
             </button>
-            <div class="divider-line" style="background-color: rgba(6, 182, 212, 0.3);"></div>
-            <button class="capsule-btn" style="color: var(--accent-cyan); padding: 4px 8px;" on:click={actions.continueExecution}>
+            <div
+              class="divider-line"
+              style="background-color: rgba(6, 182, 212, 0.3);"
+            ></div>
+            <button
+              class="capsule-btn"
+              style="color: var(--accent-cyan); padding: 4px 8px;"
+              onclick={actions.continueExecution}
+            >
               <span>Run</span>
             </button>
           </div>
         {/if}
-        
+
         {#if !$workspaceStore.crashed}
-          <button class="status-pill" on:click={actions.triggerCrash} style="border-color: rgba(239, 68, 68, 0.2); cursor: pointer;" title="Trigger Heat Loop Overheat Exception">
+          <button
+            class="status-pill"
+            onclick={actions.triggerCrash}
+            style="border-color: rgba(239, 68, 68, 0.2); cursor: pointer;"
+            title="Trigger Heat Loop Overheat Exception"
+          >
             <span class="status-dot" style="background-color: #EF4444;"></span>
             <span style="color: #EF4444;">Simulate Overheat</span>
           </button>
         {:else}
-          <button class="status-pill" on:click={actions.resolveCrash} style="border-color: rgba(16, 185, 129, 0.4); cursor: pointer;" title="Apply Code Patch Fix">
+          <button
+            class="status-pill"
+            onclick={actions.resolveCrash}
+            style="border-color: rgba(16, 185, 129, 0.4); cursor: pointer;"
+            title="Apply Code Patch Fix"
+          >
             <span class="status-dot active"></span>
             <span style="color: #10B981;">Apply AI Patch</span>
           </button>
         {/if}
 
-        <button class="status-pill" on:click={actions.toggleSerialConnection} style="cursor: pointer;" title="Toggle UART Serial Port Connection" role="button">
-          <span class="status-dot {$workspaceStore.serialConnected ? 'active' : ''}"></span>
-          <span>{$workspaceStore.serialConnected ? `UART COM4: ${$workspaceStore.baudRate}` : "UART Offline"}</span>
+        <button
+          class="status-pill"
+          onclick={actions.toggleSerialConnection}
+          style="cursor: pointer;"
+          title="Toggle UART Serial Port Connection"
+        >
+          <span
+            class="status-dot {$workspaceStore.serialConnected ? 'active' : ''}"
+          ></span>
+          <span
+            >{$workspaceStore.serialConnected
+              ? `UART COM4: ${$workspaceStore.baudRate}`
+              : "UART Offline"}</span
+          >
         </button>
 
-        <button class="status-pill" on:click={() => actions.setActiveSidebarTab("rag")} style="cursor: pointer;" title="Active Vector Database Files" role="button">
+        <button
+          class="status-pill"
+          onclick={() => actions.setActiveSidebarTab("rag")}
+          style="cursor: pointer;"
+          title="Active Vector Database Files"
+        >
           <span class="status-dot ai-active"></span>
           <span>RAG Active: {$workspaceStore.ragDocuments.length} Docs</span>
         </button>
@@ -393,24 +511,23 @@
 
       <!-- Quick Access Right -->
       <div class="tauri-controls-group">
+        <Search
+          size={14}
+          class="control-icon-btn"
+          onclick={() => actions.setActiveSidebarTab("search")}
+        />
+        <Settings
+          size={14}
+          class="control-icon-btn"
+          onclick={() => (showConfigurator = !showConfigurator)}
+        />
+        <Moon size={14} class="control-icon-btn" />
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="control-icon-btn" on:click={() => actions.setActiveSidebarTab("search")}>
-          <Search size={14} />
-        </div>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="control-icon-btn" on:click={() => showConfigurator = !showConfigurator}>
-          <Settings size={14} />
-        </div>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="control-icon-btn" on:click={() => alert('Theme toggle (Light Mode) is currently in development!')}>
-          <Moon size={14} />
-        </div>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="control-icon-btn close-btn-highlight" on:click={() => actions.setShowWelcomeScreen(true)}>
+        <div
+          class="control-icon-btn close-btn-highlight"
+          onclick={() => actions.setShowWelcomeScreen(true)}
+        >
           <X size={14} />
         </div>
       </div>
@@ -423,70 +540,153 @@
         <div class="welcome-header">
           <h1 class="welcome-title">HARDCORE<span>AI</span></h1>
           <p class="welcome-subtitle">
-            A premium, modern embedded developer workspace. Optimize your compilation, flashing, and debug loops directly on target microcontrollers with zero unnecessary visual noise.
+            A premium, modern embedded developer workspace. Optimize your
+            compilation, flashing, and debug loops directly on target
+            microcontrollers with zero unnecessary visual noise.
           </p>
         </div>
-        
+
         <div class="welcome-grid">
           <div class="welcome-column">
             <h3 class="welcome-section-title">Start</h3>
             <div class="welcome-action-list">
-              <button class="welcome-action-btn" on:click={() => {
-                actions.setActiveSidebarTab("explorer");
-                actions.setShowWelcomeScreen(false);
-              }}>
+              {#if $workspaceStore.activeProjectId}
+                <button
+                  class="welcome-action-btn"
+                  style="border-color: rgba(6, 182, 212, 0.5); background: rgba(6, 182, 212, 0.05);"
+                  onclick={() => actions.setShowWelcomeScreen(false)}
+                >
+                  <MonitorPlay size={16} class="welcome-action-icon" style="color: var(--accent-cyan);" />
+                  <span style="color: var(--accent-cyan); font-weight: 500;">Return to Active Workspace &rarr;</span>
+                </button>
+              {/if}
+              <button
+                class="welcome-action-btn"
+                onclick={async () => {
+                  if ($workspaceStore.projectsList.length > 0) {
+                    await actions.loadProject($workspaceStore.projectsList[0].id);
+                    actions.setShowWelcomeScreen(false);
+                    actions.setActiveSidebarTab("explorer");
+                  } else {
+                    alert("No recent projects found. Please create one.");
+                  }
+                }}
+              >
                 <FolderOpen size={16} class="welcome-action-icon" />
                 <span>Open Project Folder...</span>
               </button>
-              <button class="welcome-action-btn" on:click={() => {
-                actions.setActiveSidebarTab("boards");
-                actions.setShowWelcomeScreen(false);
-              }}>
+              <button
+                class="welcome-action-btn"
+                onclick={async () => {
+                  if ($workspaceStore.projectsList.length > 0) {
+                    await actions.loadProject($workspaceStore.projectsList[0].id);
+                    actions.setShowWelcomeScreen(false);
+                    actions.setActiveSidebarTab("boards");
+                  } else {
+                    alert("No recent projects found. Please create one.");
+                  }
+                }}
+              >
                 <Settings size={16} class="welcome-action-icon" />
                 <span>Configure Target Hardware...</span>
               </button>
-              <button class="welcome-action-btn" on:click={() => {
-                actions.setActiveSidebarTab("explorer");
-                actions.setShowWelcomeScreen(false);
-                actions.addBuildLog("Created new embedded project template from STM32F4xx HAL repository.");
-              }}>
-                <FileCode size={16} class="welcome-action-icon" />
-                <span>Create Embedded Project Template</span>
-              </button>
+              <div class="create-project-row" style="display: flex; gap: 8px; margin-top: 8px;">
+                <input 
+                  type="text" 
+                  id="newProjectName" 
+                  placeholder="New Project Name..." 
+                  class="welcome-input"
+                  style="flex: 1; padding: 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: white; font-family: inherit;"
+                />
+                <button
+                  class="welcome-action-btn"
+                  style="width: auto; padding: 0 20px; margin: 0;"
+                  onclick={async () => {
+                    const inputEl = document.getElementById("newProjectName") as HTMLInputElement;
+                    const projectName = inputEl?.value?.trim() || "My Embedded Project";
+                    try {
+                      const project = await api.createProject(projectName, "Created from IDE");
+                      await actions.loadProject(project.id);
+                      await actions.loadProjects(); // Refresh the list
+                      actions.setActiveSidebarTab("explorer");
+                      actions.setShowWelcomeScreen(false);
+                      actions.addBuildLog("Created new embedded project template successfully.");
+                    } catch (e: any) {
+                      actions.addBuildLog("Failed to create project: " + e.message);
+                    }
+                  }}
+                >
+                  <Plus size={16} class="welcome-action-icon" />
+                  <span>Create</span>
+                </button>
+              </div>
             </div>
           </div>
-          
+
           <div class="welcome-column">
             <h3 class="welcome-section-title">Recent Workspaces</h3>
             <div class="recent-list">
-              <!-- svelte-ignore a11y-click-events-have-key-events -->
-              <!-- svelte-ignore a11y-no-static-element-interactions -->
-              <div class="recent-item" on:click={() => {
-                actions.setSelectedBoard("STM32F401");
-                actions.setSelectedProbe("ST-Link V2");
-                actions.setShowWelcomeScreen(false);
-              }}>
-                <div class="recent-name">stm32-motor-driver</div>
-                <div class="recent-path">~/firmware/stm32-motor-driver</div>
-              </div>
-              <!-- svelte-ignore a11y-click-events-have-key-events -->
-              <!-- svelte-ignore a11y-no-static-element-interactions -->
-              <div class="recent-item" on:click={() => {
-                actions.setSelectedBoard("ESP32-S3");
-                actions.setSelectedProbe("J-Link");
-                actions.setShowWelcomeScreen(false);
-              }}>
-                <div class="recent-name">esp32-wifi-node</div>
-                <div class="recent-path">~/iot/esp32-wifi-node</div>
-              </div>
+              {#each $workspaceStore.projectsList as project}
+                <div style="display: flex; align-items: center; justify-content: space-between; padding-right: 12px; gap: 8px; border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; margin-bottom: 8px; background: rgba(0,0,0,0.2);">
+                  <div
+                    class="recent-item"
+                    style="flex: 1; border: none; margin-bottom: 0; background: transparent;"
+                    onclick={async () => {
+                      await actions.loadProject(project.id);
+                      actions.setSelectedBoard("STM32F401");
+                      actions.setSelectedProbe("ST-Link V2");
+                      actions.setShowWelcomeScreen(false);
+                    }}
+                  >
+                    <div class="recent-name">{project.name}</div>
+                    <div class="recent-path">Project ID: {project.id} | {new Date(project.created_at).toLocaleDateString()}</div>
+                  </div>
+                  <button 
+                    class="control-icon-btn close-btn-highlight" 
+                    title="Delete Project"
+                    style="padding: 6px; border-radius: 4px;"
+                    onclick={async (e) => {
+                      e.stopPropagation();
+                      if (confirm(`Are you sure you want to delete '${project.name}'?`)) {
+                        await actions.deleteProject(project.id);
+                      }
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              {/each}
+              {#if $workspaceStore.projectsList.length === 0}
+                <div class="recent-item" style="opacity: 0.5;">
+                  <div class="recent-name">No projects found</div>
+                  <div class="recent-path">Create a new template to get started</div>
+                </div>
+              {/if}
             </div>
           </div>
         </div>
-        
+
         <div class="welcome-footer">
-          <div class="welcome-footer-logo">HARDCOREAI v1.0.0 (Renderer: Svelte 5)</div>
-          <button class="welcome-enter-btn" on:click={() => actions.setShowWelcomeScreen(false)}>
-            <span>Open Workspace</span>
+          <div class="welcome-footer-logo">
+            HARDCOREAI v1.0.0 (Renderer: Svelte 5)
+          </div>
+          <button
+            class="welcome-enter-btn"
+            onclick={async () => {
+              if (!$workspaceStore.activeProjectId) {
+                if ($workspaceStore.projectsList.length > 0) {
+                  await actions.loadProject($workspaceStore.projectsList[0].id);
+                } else {
+                  await api.createProject("My Embedded Project", "Created from IDE");
+                  await actions.loadProjects();
+                  const newProj = $workspaceStore.projectsList[0];
+                  if (newProj) await actions.loadProject(newProj.id);
+                }
+              }
+              actions.setShowWelcomeScreen(false);
+            }}
+          >
+            <span>{$workspaceStore.activeProjectId ? 'Return to Workspace' : 'Open Workspace'}</span>
             <ArrowRight size={14} />
           </button>
         </div>
@@ -495,520 +695,788 @@
   {:else}
     <!-- 2. Main Workspace Layout -->
     <div class="helix-main-workspace {$workspaceStore.isDebugging ? 'debug-active' : ''} {aiOpen ? 'ai-open' : ''}">
-      
+
       <!-- Leftmost Activity Bar -->
       <nav class="activity-bar">
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <button class="activity-item {$workspaceStore.activeSidebarTab === 'explorer' ? 'active' : ''}" on:click={() => actions.setActiveSidebarTab("explorer")} title="Explorer" role="button">
-          <Folder size={18} />
-        </button>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <button class="activity-item {$workspaceStore.activeSidebarTab === 'search' ? 'active' : ''}" on:click={() => actions.setActiveSidebarTab("search")} title="Search" role="button">
-          <Search size={18} />
-        </button>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <button class="activity-item {$workspaceStore.activeSidebarTab === 'git' ? 'active' : ''}" on:click={() => actions.setActiveSidebarTab("git")} title="Source Control" role="button">
-          <GitBranch size={18} />
-        </button>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <button class="activity-item {$workspaceStore.activeSidebarTab === 'debug' ? 'active' : ''}" on:click={() => actions.setActiveSidebarTab("debug")} title="Run & Debug" role="button">
-          <Bug size={18} />
-        </button>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <button class="activity-item {$workspaceStore.activeSidebarTab === 'rag' ? 'active' : ''}" on:click={() => actions.setActiveSidebarTab("rag")} title="RAG Knowledge Docs" role="button">
-          <Database size={18} />
-        </button>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <button class="activity-item {$workspaceStore.activeSidebarTab === 'boards' ? 'active' : ''}" on:click={() => actions.setActiveSidebarTab("boards")} title="Target Config" role="button">
-          <Settings size={18} />
-        </button>
-      </nav>
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+      <button
+        class="activity-item {$workspaceStore.activeSidebarTab === 'explorer'
+          ? 'active'
+          : ''}"
+        onclick={() => actions.setActiveSidebarTab("explorer")}
+        title="Explorer"
+      >
+        <Folder size={18} />
+      </button>
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+      <button
+        class="activity-item {$workspaceStore.activeSidebarTab === 'search'
+          ? 'active'
+          : ''}"
+        onclick={() => actions.setActiveSidebarTab("search")}
+        title="Search"
+      >
+        <Search size={18} />
+      </button>
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+      <button
+        class="activity-item {$workspaceStore.activeSidebarTab === 'git'
+          ? 'active'
+          : ''}"
+        onclick={() => actions.setActiveSidebarTab("git")}
+        title="Source Control"
+      >
+        <GitBranch size={18} />
+      </button>
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+      <button
+        class="activity-item {$workspaceStore.activeSidebarTab === 'debug'
+          ? 'active'
+          : ''}"
+        onclick={() => actions.setActiveSidebarTab("debug")}
+        title="Run & Debug"
+      >
+        <Bug size={18} />
+      </button>
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+      <button
+        class="activity-item {$workspaceStore.activeSidebarTab === 'rag'
+          ? 'active'
+          : ''}"
+        onclick={() => actions.setActiveSidebarTab("rag")}
+        title="RAG Knowledge Docs"
+      >
+        <Database size={18} />
+      </button>
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+      <button
+        class="activity-item {$workspaceStore.activeSidebarTab === 'boards'
+          ? 'active'
+          : ''}"
+        onclick={() => actions.setActiveSidebarTab("boards")}
+        title="Target Config"
+      >
+        <Settings size={18} />
+      </button>
+    </nav>
 
-      <!-- Sidebar Panel Column -->
-      <aside class="sidebar-panel" style="width: {sidebarWidth}px;">
-        {#if $workspaceStore.activeSidebarTab === "explorer"}
-          <div class="panel-header">
-            <div class="panel-title">PROJECT EXPLORER</div>
-            <div class="pane-header-actions" style="display: flex; gap: 6px;">
-              <Plus size={13} style="cursor: pointer; color: var(--text-muted);" />
-              <FolderOpen size={12} style="cursor: pointer; color: var(--text-muted);" />
-            </div>
+    <!-- Sidebar Panel Column -->
+    <aside class="workspace-panel sidebar-panel" style="width: {sidebarWidth}px;">
+      {#if $workspaceStore.activeSidebarTab === "explorer"}
+        <div class="panel-header">
+          <div class="panel-title">PROJECT EXPLORER</div>
+          <div class="pane-header-actions" style="display: flex; gap: 6px;">
+            <Plus
+              size={13}
+              style="cursor: pointer; color: var(--text-muted);"
+            />
+            <FolderOpen
+              size={12}
+              style="cursor: pointer; color: var(--text-muted);"
+            />
           </div>
-          
-          <div class="panel-body flex-container-explorer" style="display: flex; flex-direction: column; gap: 16px;">
-            <div class="explorer-section">
-              <div class="file-list">
-                <div style="margin-bottom: 2px;">
-                  <!-- svelte-ignore a11y-click-events-have-key-events -->
-                  <!-- svelte-ignore a11y-no-static-element-interactions -->
-                  <div class="file-item folder" on:click={() => showConfigurator = !showConfigurator}>
-                    <Blocks size={14} style="color: var(--accent-violet);" />
-                    <span>Embedded Configurator</span>
-                  </div>
-                  <div class="folder-contents">
-                    {#each $workspaceStore.fileTree as cat}
-                      {@const render = renderFileNode(cat)}
-                      {#if render.isFolder}
-                        <div style="margin-bottom: 2px;">
-                          <div class="file-item folder">
-                            <Folder size={14} style="color: var(--accent-violet);" />
-                            <span>{render.item.name}</span>
-                          </div>
-                          <div class="folder-contents">
-                            {#each render.children as child}
-                              <!-- svelte-ignore a11y-click-events-have-key-events -->
-                              <!-- svelte-ignore a11y-no-static-element-interactions -->
-                              <div
-                                class="file-item {$workspaceStore.activeFile === child.path ? 'active' : ''}"
-                                on:click={() => actions.setActiveFile(child.path)}
-                              >
-                                <FileCode size={14} style="color: var(--accent-violet-hover);" />
-                                <span>{child.name}</span>
-                              </div>
-                            {/each}
-                          </div>
-                        </div>
-                      {:else}
-                        <!-- svelte-ignore a11y-click-events-have-key-events -->
-                        <!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div
-                          class="file-item {render.isActive ? 'active' : ''}"
-                          on:click={() => actions.setActiveFile(render.item.path)}
-                        >
-                          <File size={14} style="color: var(--text-muted);" />
-                          <span>{render.item.name}</span>
-                        </div>
-                      {/if}
-                    {/each}
-                  </div>
-                </div>
-              </div>
-            </div>
+        </div>
 
-            <!-- RAG Context indicator shortcut inside explorer -->
-            <div class="explorer-sub-section">
-              <div class="explorer-sub-header">RAG DATABASES CONTEXT</div>
-              {#each $workspaceStore.ragDocuments as doc}
-                <div class="quick-access-item" on:click={() => actions.setActiveSidebarTab("rag")} style="cursor: pointer; display: flex; align-items: center; justify-content: space-between;">
-                  <span style="font-family: var(--font-mono); font-size: 0.65rem; color: var(--accent-cyan); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;">{doc.name}</span>
-                  <span class="shortcut-tag">{doc.size}</span>
-                </div>
-              {/each}
-            </div>
-
-            <div class="explorer-sub-section">
-              <div class="explorer-sub-header">EMULATED HARDWARE STATUS</div>
-              <div class="workspace-item-row" style="display: flex; align-items: center; justify-content: space-between; font-size: 0.65rem;">
-                <span>Virtual MCU Core:</span>
-                <span style="color: {$workspaceStore.emulationRunning ? 'var(--accent-success)' : 'var(--text-dark)'}; font-weight: bold;">
-                  {$workspaceStore.emulationRunning ? 'ACTIVE' : 'HALTED'}
-                </span>
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        {#if $workspaceStore.activeSidebarTab === "search"}
-          <div class="panel-header">
-            <div class="panel-title">Search Workspace</div>
-          </div>
-          <div class="panel-body">
-            <div class="sidebar-search-panel">
-              <input type="text" placeholder="Search string..." />
-              <input type="text" placeholder="Files to include (e.g. *.c)" />
-              <div style="font-size: 0.75rem; color: var(--text-dark); margin-top: 10px;">
-                No active search results. Press Enter to search.
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        {#if $workspaceStore.activeSidebarTab === "git"}
-          <div class="panel-header">
-            <div class="panel-title">Source Control</div>
-          </div>
-          <div class="panel-body">
-            <div class="sidebar-git-panel">
-              <input type="text" placeholder="Commit message (Ctrl+Enter)..." />
-              <button class="git-commit-btn">Commit Changes</button>
-              <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 8px;">
-                <strong style="display: block; margin-bottom: 4px;">Staged Changes (2)</strong>
-                <div style="padding: 2px 0; color: var(--accent-success); font-family: var(--font-mono); font-size: 0.7rem;">M  Core/Src/main.c</div>
-                <div style="padding: 2px 0; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.7rem;">M  CMakeLists.txt</div>
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        {#if $workspaceStore.activeSidebarTab === "debug"}
-          <div class="panel-header">
-            <div class="panel-title">Run & Debug GDB</div>
-          </div>
-          <div class="panel-body">
-            <div class="sidebar-debug-panel">
-              <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 12px;">
-                <strong style="display: block; margin-bottom: 4px;">Call Stack</strong>
-                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted);">
-                  {$workspaceStore.callStack[0]}
-                </div>
-                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dark);">
-                  {$workspaceStore.callStack[1]}
-                </div>
-              </div>
-              <div style="font-size: 0.75rem; color: var(--text-muted);">
-                <strong style="display: block; margin-bottom: 4px;">Active Breakpoints</strong>
-                <div style="padding: 2px 0; display: flex; align-items: center; gap: 6px;">
-                  <span style="width: 6px; height: 6px; border-radius: 50%; background-color: var(--accent-error);"></span>
-                  <span>main.c: Line 24</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        {#if $workspaceStore.activeSidebarTab === "rag"}
-          <RagUploadPanel />
-        {/if}
-
-        {#if $workspaceStore.activeSidebarTab === "boards"}
-          <div class="panel-header">
-            <div class="panel-title">Target Config</div>
-          </div>
-          <div class="panel-body">
-            <div class="boards-config-panel">
-              <div class="config-group">
-                <!-- svelte-ignore a11y-label-has-associated-control -->
-                <label>MCU Board Target</label>
-                <select class="config-select" value={$workspaceStore.selectedBoard} on:change={(e) => actions.setSelectedBoard(e.currentTarget.value as any)}>
-                  <option value="STM32F401">STM32F401 (Cortex-M4)</option>
-                  <option value="ESP32-S3">ESP32-S3 (Xtensa LX7)</option>
-                  <option value="RP2040">RP2040 (Cortex-M0+)</option>
-                </select>
-              </div>
-              <div class="config-group">
-                <!-- svelte-ignore a11y-label-has-associated-control -->
-                <label>Debugger Probe</label>
-                <select class="config-select" value={$workspaceStore.selectedProbe} on:change={(e) => actions.setSelectedProbe(e.currentTarget.value as any)}>
-                  <option value="ST-Link V2">ST-Link V2 (SWD)</option>
-                  <option value="J-Link">J-Link (SWD/JTAG)</option>
-                  <option value="CMSIS-DAP">CMSIS-DAP (SWD)</option>
-                </select>
-              </div>
-              <div class="config-group">
-                <!-- svelte-ignore a11y-label-has-associated-control -->
-                <label>Toolchain compiler Path</label>
-                <div class="path-input-wrapper">
-                  <input type="text" class="config-input" value={$workspaceStore.toolchainPath} on:change={(e) => actions.setToolchainPath(e.currentTarget.value)} />
-                  <button class="browse-btn" on:click={() => actions.setToolchainPath("/usr/bin/arm-none-eabi-gcc")}>Reset</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        {/if}
-      </aside>
-
-      <!-- Sidebar Drag Handle -->
-      <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <div 
-        class="resize-handle vertical-handle" 
-        on:mousedown={() => isDraggingLeft = true}
-        style="left: {sidebarWidth + 52}px;"
-      ></div>
-
-      <!-- Center Workspace Area (Editor + Bottom Drawer) -->
-      <main class="center-editor-panel" style="left: {sidebarWidth + 52 + 4}px; right: {aiOpen ? rightSidebarWidth + 4 : 4}px;">
-        
-        <!-- Editor Frame -->
-        <section class="monaco-editor-frame" style="bottom: {bottomDrawerHeight}px;">
-          <!-- Editor Header Tab bar -->
-          <div class="editor-tabs-bar">
-            {#if $workspaceStore.activeFile}
-              <div class="editor-tab active">
-                <FileCode size={12} style="color: var(--accent-violet-hover);" />
-                <span>{$workspaceStore.activeFile.split("/").pop()}</span>
+        <div
+          class="panel-body flex-container-explorer"
+          style="display: flex; flex-direction: column; gap: 16px;"
+        >
+          <div class="explorer-section">
+            <div class="file-list">
+              <div style="margin-bottom: 2px;">
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
                 <!-- svelte-ignore a11y-no-static-element-interactions -->
-                <span class="close-tab" on:click={() => actions.setActiveFile(null)}>×</span>
-              </div>
-            {/if}
-            <button class="configurator-toggle-tab" on:click={() => showConfigurator = !showConfigurator}>
-              <Sliders size={11} style="color: var(--text-muted);" />
-              <span>{showConfigurator ? "Switch to Editor" : "Embedded Configurator"}</span>
-            </button>
-          </div>
-
-          <!-- Active Editor Display -->
-          <div class="editor-container-wrapper" style="display: {showConfigurator ? 'none' : 'block'};">
-            <div class="monaco-container" use:initMonaco></div>
-            
-            {#if $workspaceStore.crashed}
-              <div class="crash-overlay">
-                <div class="crash-icon-box">
-                  <AlertTriangle size={24} />
+                <div
+                  class="file-item folder"
+                  onclick={() => (showConfigurator = !showConfigurator)}
+                >
+                  <Blocks size={14} style="color: var(--accent-violet);" />
+                  <span>Embedded Configurator</span>
                 </div>
-                <div class="crash-details">
-                  <h3>HARDWARE EXCEPTION (Core halted in HardFault_Handler)</h3>
-                  <p>{$workspaceStore.crashReason}</p>
-                  <span>Line 45: *crash_trigger = 0xDEADC0DE; (Dereferenced Null Pointer PC: 0x08001A4E)</span>
-                </div>
-                <button class="crash-resolve-btn" on:click={actions.resolveCrash}>
-                  <Sparkles size={13} />
-                  Apply AI Hotpatch Fix
-                </button>
-              </div>
-            {/if}
-          </div>
-
-          <!-- Configurator view -->
-          {#if showConfigurator}
-            <div class="configurator-container-inner" style="height: 100%; width: 100%;">
-              <EmbeddedConfigurator 
-                selectedBoard={$workspaceStore.selectedBoard} 
-                onClose={() => showConfigurator = false}
-                isDetached={false}
-                onDetach={() => showConfigurator = false}
-              />
-            </div>
-          {/if}
-        </section>
-
-        <!-- Bottom Drawer Resizer Handle -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div 
-          class="resize-handle horizontal-handle" 
-          on:mousedown={() => isDraggingBottom = true}
-          style="bottom: {bottomDrawerHeight}px;"
-        ></div>
-
-        <!-- Bottom Drawer Frame -->
-        <footer class="bottom-drawer-frame" style="height: {bottomDrawerHeight}px;">
-          <!-- Tabs bar -->
-          <div class="drawer-tabs-bar">
-            <button class="drawer-tab {$workspaceStore.activeBottomTab === 'terminal' ? 'active' : ''}" on:click={() => actions.setBottomTab("terminal")}>
-              <span>SERIAL TERMINAL</span>
-            </button>
-            <button class="drawer-tab {$workspaceStore.activeBottomTab === 'plotter' ? 'active' : ''}" on:click={() => actions.setBottomTab("plotter")}>
-              <span>TELEMETRY PLOTTER</span>
-            </button>
-            <button class="drawer-tab {$workspaceStore.activeBottomTab === 'registers' ? 'active' : ''}" on:click={() => actions.setBottomTab("registers")}>
-              <span>SFR REGISTERS</span>
-            </button>
-            <button class="drawer-tab {$workspaceStore.activeBottomTab === 'emulation' ? 'active' : ''}" on:click={() => actions.setBottomTab("emulation")}>
-              <span>HARDWARE EMULATION</span>
-            </button>
-            <button class="drawer-tab {$workspaceStore.activeBottomTab === 'memory' ? 'active' : ''}" on:click={() => actions.setBottomTab("memory")}>
-              <span>BUILD OUTPUT</span>
-            </button>
-          </div>
-
-          <!-- Active tab view -->
-          <div class="drawer-contents-wrapper">
-            {#if $workspaceStore.activeBottomTab === "terminal"}
-              <div class="serial-terminal-view">
-                <div class="terminal-logs">
-                  {#each $workspaceStore.serialLogs as log}
-                    <div class="term-line">{log}</div>
-                  {/each}
-                  <div bind:this={terminalEndRef}></div>
-                </div>
-                <form class="terminal-input-bar" on:submit={handleSerialSend}>
-                  <span class="prompt">COM4 &gt;</span>
-                  <input type="text" placeholder="Send serial bytes to MCU..." bind:value={serialInput} />
-                  <button type="submit">SEND</button>
-                </form>
-              </div>
-            {/if}
-
-            {#if $workspaceStore.activeBottomTab === "plotter"}
-              <div class="telemetry-plotter-view">
-                <div class="plot-stats-overlay">
-                  <div class="stat-lbl"><span class="stat-dot temp"></span>TEMP: <span class="stat-val">{$workspaceStore.analogSensors.temp.toFixed(1)} °C</span></div>
-                  <div class="stat-lbl"><span class="stat-dot volt"></span>VDD: <span class="stat-val">{$workspaceStore.analogSensors.voltage.toFixed(2)} V</span></div>
-                  <div class="stat-lbl"><span class="stat-dot curr"></span>IDD: <span class="stat-val">{$workspaceStore.analogSensors.current.toFixed(1)} mA</span></div>
-                </div>
-                <canvas bind:this={canvasEl} class="telemetry-canvas"></canvas>
-              </div>
-            {/if}
-
-            {#if $workspaceStore.activeBottomTab === "registers"}
-              <div class="sfr-registers-view">
-                <div class="sfr-periph-col">
-                  {#each $workspaceStore.registers as reg}
-                    <!-- svelte-ignore a11y-click-events-have-key-events -->
-                    <!-- svelte-ignore a11y-no-static-element-interactions -->
-                    <div 
-                      class="periph-item {selectedPeripheral === reg.name ? 'active' : ''}"
-                      on:click={() => selectedPeripheral = reg.name}
-                    >
-                      <Cpu size={12} style="color: var(--accent-violet);" />
-                      <span>{reg.name}</span>
-                    </div>
-                  {/each}
-                </div>
-                
-                <div class="sfr-details-col">
-                  {#each $workspaceStore.registers as reg}
-                    {#if selectedPeripheral === reg.name}
-                      <div class="sfr-details-header">
-                        <h4>{reg.name} <span>({reg.description})</span></h4>
-                        <span class="reg-base-val">{reg.value}</span>
-                      </div>
-                      <div class="sfr-bits-list">
-                        <div class="sfr-bits-header">
-                          <span>Register</span>
-                          <span>Value</span>
-                          <span>Range</span>
-                          <span>Functional Description</span>
+                <div class="folder-contents">
+                  {#each $workspaceStore.fileTree as cat}
+                    {@const render = renderFileNode(cat)}
+                    {#if render.isFolder}
+                      <div style="margin-bottom: 2px;">
+                        <div class="file-item folder">
+                          <Folder
+                            size={14}
+                            style="color: var(--accent-violet);"
+                          />
+                          <span>{render.item.name}</span>
                         </div>
-                        {#each reg.bits || [] as bit}
-                          <div class="sfr-bit-row">
-                            <span class="bit-name">{bit.name}</span>
-                            <span class="bit-val">0x{bit.value.toString(16).toUpperCase()}</span>
-                            <span class="bit-range">{bit.range}</span>
-                            <span class="bit-desc">{bit.description}</span>
-                          </div>
-                        {/each}
+                        <div class="folder-contents">
+                          {#each render.children as child}
+                            <!-- svelte-ignore a11y-click-events-have-key-events -->
+                            <!-- svelte-ignore a11y-no-static-element-interactions -->
+                            <div
+                              class="file-item {$workspaceStore.activeFile ===
+                              child.path
+                                ? 'active'
+                                : ''}"
+                              onclick={() => actions.setActiveFile(child.path)}
+                            >
+                              <FileCode
+                                size={14}
+                                style="color: var(--accent-violet-hover);"
+                              />
+                              <span>{child.name}</span>
+                            </div>
+                          {/each}
+                        </div>
+                      </div>
+                    {:else}
+                      <!-- svelte-ignore a11y-click-events-have-key-events -->
+                      <!-- svelte-ignore a11y-no-static-element-interactions -->
+                      <div
+                        class="file-item {render.isActive ? 'active' : ''}"
+                        onclick={() => actions.setActiveFile(render.item.path)}
+                      >
+                        <File size={14} style="color: var(--text-muted);" />
+                        <span>{render.item.name}</span>
                       </div>
                     {/if}
                   {/each}
                 </div>
               </div>
-            {/if}
+            </div>
+          </div>
 
-            {#if $workspaceStore.activeBottomTab === "emulation"}
-              <EmulationPanel />
-            {/if}
+          <!-- RAG Context indicator shortcut inside explorer -->
+          <div class="explorer-sub-section">
+            <div class="explorer-sub-header">RAG DATABASES CONTEXT</div>
+            {#each $workspaceStore.ragDocuments as doc}
+              <button
+                type="button"
+                class="quick-access-item"
+                onclick={() => actions.setActiveSidebarTab("rag")}
+                style="cursor: pointer; display: flex; align-items: center; justify-content: space-between;"
+              >
+                <span
+                  style="font-family: var(--font-mono); font-size: 0.65rem; color: var(--accent-cyan); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;"
+                  >{doc.name}</span
+                >
+                <span class="shortcut-tag">{doc.size}</span>
+              </button>
+            {/each}
+          </div>
 
-            {#if $workspaceStore.activeBottomTab === "memory"}
-              <div class="serial-terminal-view">
-                <div class="terminal-logs" style="font-family: var(--font-mono);">
-                  {#each $workspaceStore.buildLogs as log}
-                    <div class="term-line" style="color: {log.includes('Successful') ? 'var(--accent-success)' : log.includes('Error') ? 'var(--accent-error)' : '#94A3B8'};">{log}</div>
-                  {/each}
-                </div>
+          <div class="explorer-sub-section">
+            <div class="explorer-sub-header">EMULATED HARDWARE STATUS</div>
+            <div
+              class="workspace-item-row"
+              style="display: flex; align-items: center; justify-content: space-between; font-size: 0.65rem;"
+            >
+              <span>Virtual MCU Core:</span>
+              <span
+                style="color: {$workspaceStore.emulationRunning
+                  ? 'var(--accent-success)'
+                  : 'var(--text-dark)'}; font-weight: bold;"
+              >
+                {$workspaceStore.emulationRunning ? "ACTIVE" : "HALTED"}
+              </span>
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      {#if $workspaceStore.activeSidebarTab === "search"}
+        <div class="panel-header">
+          <div class="panel-title">Search Workspace</div>
+        </div>
+        <div class="panel-body">
+          <div class="sidebar-search-panel">
+            <input type="text" placeholder="Search string..." />
+            <input type="text" placeholder="Files to include (e.g. *.c)" />
+            <div
+              style="font-size: 0.75rem; color: var(--text-dark); margin-top: 10px;"
+            >
+              No active search results. Press Enter to search.
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      {#if $workspaceStore.activeSidebarTab === "git"}
+        <div class="panel-header">
+          <div class="panel-title">Source Control</div>
+        </div>
+        <div class="panel-body">
+          <div class="sidebar-git-panel">
+            <input type="text" placeholder="Commit message (Ctrl+Enter)..." />
+            <button class="git-commit-btn">Commit Changes</button>
+            <div
+              style="font-size: 0.75rem; color: var(--text-muted); margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 8px;"
+            >
+              <strong style="display: block; margin-bottom: 4px;"
+                >Staged Changes (2)</strong
+              >
+              <div
+                style="padding: 2px 0; color: var(--accent-success); font-family: var(--font-mono); font-size: 0.7rem;"
+              >
+                M Core/Src/main.c
               </div>
-            {/if}
+              <div
+                style="padding: 2px 0; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.7rem;"
+              >
+                M CMakeLists.txt
+              </div>
+            </div>
           </div>
-        </footer>
-      </main>
+        </div>
+      {/if}
 
-      <!-- Right Panel Resizer Handle -->
-      <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <div 
-        class="resize-handle vertical-handle" 
-        on:mousedown={() => isDraggingRight = true}
-        style="right: {rightSidebarWidth}px;"
-      ></div>
-
-      <!-- Right AI Panel Column -->
-      <aside class="right-ai-panel" style="width: {rightSidebarWidth}px; display: {aiOpen ? 'flex' : 'none'};">
-        <div class="ai-panel-header">
-          <div class="ai-title">
-            <Sparkles size={14} style="color: var(--accent-violet-hover);" />
-            <span>HARDCOREAI COPILOT</span>
+      {#if $workspaceStore.activeSidebarTab === "debug"}
+        <div class="panel-header">
+          <div class="panel-title">Run & Debug GDB</div>
+        </div>
+        <div class="panel-body">
+          <div class="sidebar-debug-panel">
+            <div
+              style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 12px;"
+            >
+              <strong style="display: block; margin-bottom: 4px;"
+                >Call Stack</strong
+              >
+              <div
+                style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted);"
+              >
+                {$workspaceStore.callStack[0]}
+              </div>
+              <div
+                style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dark);"
+              >
+                {$workspaceStore.callStack[1]}
+              </div>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">
+              <strong style="display: block; margin-bottom: 4px;"
+                >Active Breakpoints</strong
+              >
+              <div
+                style="padding: 2px 0; display: flex; align-items: center; gap: 6px;"
+              >
+                <span
+                  style="width: 6px; height: 6px; border-radius: 50%; background-color: var(--accent-error);"
+                ></span>
+                <span>main.c: Line 24</span>
+              </div>
+            </div>
           </div>
-          <button class="close-ai-btn" on:click={() => aiOpen = false}>
-            <X size={13} />
+        </div>
+      {/if}
+
+      {#if $workspaceStore.activeSidebarTab === "rag"}
+        <RagUploadPanel />
+      {/if}
+
+      {#if $workspaceStore.activeSidebarTab === "boards"}
+        <div class="panel-header">
+          <div class="panel-title">Target Config</div>
+        </div>
+        <div class="panel-body">
+          <div class="boards-config-panel">
+            <div class="config-group">
+              <!-- svelte-ignore a11y-label-has-associated-control -->
+              <label>MCU Board Target</label>
+              <select
+                class="config-select"
+                value={$workspaceStore.selectedBoard}
+                onchange={(e) =>
+                  actions.setSelectedBoard(e.currentTarget.value as any)}
+              >
+                <option value="STM32F401">STM32F401 (Cortex-M4)</option>
+                <option value="ESP32-S3">ESP32-S3 (Xtensa LX7)</option>
+                <option value="RP2040">RP2040 (Cortex-M0+)</option>
+              </select>
+            </div>
+            <div class="config-group">
+              <!-- svelte-ignore a11y-label-has-associated-control -->
+              <label>Debugger Probe</label>
+              <select
+                class="config-select"
+                value={$workspaceStore.selectedProbe}
+                onchange={(e) =>
+                  actions.setSelectedProbe(e.currentTarget.value as any)}
+              >
+                <option value="ST-Link V2">ST-Link V2 (SWD)</option>
+                <option value="J-Link">J-Link (SWD/JTAG)</option>
+                <option value="CMSIS-DAP">CMSIS-DAP (SWD)</option>
+              </select>
+            </div>
+            <div class="config-group">
+              <!-- svelte-ignore a11y-label-has-associated-control -->
+              <label>Toolchain compiler Path</label>
+              <div class="path-input-wrapper">
+                <input
+                  type="text"
+                  class="config-input"
+                  value={$workspaceStore.toolchainPath}
+                  onchange={(e) =>
+                    actions.setToolchainPath(e.currentTarget.value)}
+                />
+                <button
+                  class="browse-btn"
+                  onclick={() =>
+                    actions.setToolchainPath("/usr/bin/arm-none-eabi-gcc")}
+                  >Reset</button
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+      {/if}
+    </aside>
+
+    <!-- Sidebar Drag Handle -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div
+      class="resize-handle vertical-handle"
+      onmousedown={() => { isDraggingLeft = true; document.body.classList.add('dragging-col'); }}
+      style="left: {sidebarWidth + 52}px;"
+    ></div>
+
+    <!-- Center Workspace Area (Editor + Bottom Drawer) -->
+    <main class="center-editor-panel editor-container">
+      <!-- Editor Frame -->
+      <section class="monaco-editor-frame">
+        <!-- Editor Header Tab bar -->
+        <div class="editor-tabs">
+          {#if $workspaceStore.activeFile}
+            <div class="editor-tab active">
+              <FileCode size={12} style="color: var(--accent-violet-hover);" />
+              <span>{$workspaceStore.activeFile.split("/").pop()}</span>
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
+              <!-- svelte-ignore a11y-no-static-element-interactions -->
+              <span
+                class="close-tab"
+                onclick={() => actions.setActiveFile(null)}>×</span
+              >
+            </div>
+          {/if}
+          <button
+            class="configurator-toggle-tab"
+            onclick={() => (showConfigurator = !showConfigurator)}
+          >
+            <Sliders size={11} style="color: var(--text-muted);" />
+            <span
+              >{showConfigurator
+                ? "Switch to Editor"
+                : "Embedded Configurator"}</span
+            >
           </button>
         </div>
 
-        <!-- Chat messages view -->
-        <div class="ai-messages-container">
-          {#each $workspaceStore.aiMessages as msg}
-            <div class="chat-bubble-wrapper {msg.sender}">
-              <div class="chat-bubble">
-                <div class="bubble-header">
-                  <span class="sender">{msg.sender === "ai" ? "HARDCOREAI COPILOT" : "DEVELOPER"}</span>
-                  <span class="time">{msg.timestamp}</span>
-                </div>
-                <!-- Render markdown text formatting -->
-                <div class="bubble-text">
-                  {#if msg.text.includes("```")}
-                    {@const parts = msg.text.split("```")}
-                    {#each parts as part, i}
-                      {#if i % 2 === 0}
-                        <p style="margin: 0; white-space: pre-wrap;">{part}</p>
-                      {#else}
-                        {@const codeLines = part.split("\n")}
-                        {@const code = codeLines.slice(1).join("\n")}
-                        <pre class="chat-code-block"><code>{code}</code></pre>
-                      {/if}
-                    {/each}
-                  {:else}
-                    <p style="margin: 0; white-space: pre-wrap;">{msg.text}</p>
-                  {/if}
-                </div>
+        <!-- Active Editor Display -->
+        <div
+          class="monaco-editor-wrapper"
+          class:hidden={showConfigurator}
+        >
+          {#if $workspaceStore.activeFile}
+            <div class="monaco-container" use:initMonaco></div>
+          {:else}
+            <div class="empty-editor-state">
+              <h2 style="color: var(--text-muted); font-weight: 500; font-size: 1.1rem; letter-spacing: 0.5px; margin-bottom: 2rem;">
+                HARDCORE IDE WORKSPACE
+              </h2>
+              <div class="quick-actions-row">
+                <button class="action-card" onclick={() => actions.setActiveSidebarTab("explorer")}>
+                  <Folder size={24} style="color: var(--accent-blue);" />
+                  <span>Open Project Folder</span>
+                </button>
+                <button class="action-card" onclick={() => (showConfigurator = true)}>
+                  <Settings size={24} style="color: var(--accent-orange);" />
+                  <span>Configure Target Hardware</span>
+                </button>
+                <button class="action-card" onclick={() => (terminalOpen = true)}>
+                  <MonitorPlay size={24} style="color: var(--accent-green);" />
+                  <span>Open Terminal &rarr;</span>
+                </button>
               </div>
             </div>
-          {/each}
+          {/if}
 
-          {#if $workspaceStore.aiWaiting}
-            <div class="chat-bubble-wrapper ai">
-              <div class="chat-bubble waiting">
-                <span class="dot"></span>
-                <span class="dot"></span>
-                <span class="dot"></span>
+          {#if $workspaceStore.crashed}
+            <div class="crash-overlay">
+              <div class="crash-icon-box">
+                <AlertTriangle size={24} />
               </div>
+              <div class="crash-details">
+                <h3>HARDWARE EXCEPTION (Core halted in HardFault_Handler)</h3>
+                <p>{$workspaceStore.crashReason}</p>
+                <span
+                  >Line 45: *crash_trigger = 0xDEADC0DE; (Dereferenced Null
+                  Pointer PC: 0x08001A4E)</span
+                >
+              </div>
+              <button class="crash-resolve-btn" onclick={actions.resolveCrash}>
+                <Sparkles size={13} />
+                Apply AI Hotpatch Fix
+              </button>
             </div>
           {/if}
         </div>
 
-        <!-- Input Box -->
-        <form class="ai-input-form" on:submit={handleAiSend}>
-          <input 
-            type="text" 
-            placeholder="Ask AI about register status, RAG, or fix code..." 
-            bind:value={aiInput} 
-          />
-          <button type="submit">
-            <Send size={12} />
-          </button>
-        </form>
-      </aside>
-      
-      <!-- Tiny AI Toggle Pill on Right Border if Closed -->
-      {#if !aiOpen}
+        <!-- Configurator view -->
+        {#if showConfigurator}
+          <div
+            class="configurator-container-inner"
+            style="height: 100%; width: 100%;"
+          >
+            <EmbeddedConfigurator
+              selectedBoard={$workspaceStore.selectedBoard}
+              onClose={() => (showConfigurator = false)}
+              isDetached={false}
+              onDetach={() => (showConfigurator = false)}
+            />
+          </div>
+        {/if}
+      </section>
+
+      <!-- Bottom Drawer Resizer Handle (inline flex child, sits between editor and terminal) -->
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      {#if terminalOpen}
+        <div
+          class="resize-handle horizontal-handle"
+          onmousedown={() => { isDraggingBottom = true; document.body.classList.add('dragging-row'); }}
+        ></div>
+      {/if}
+
+      <!-- Bottom Drawer Frame -->
+      {#if terminalOpen}
+        <footer
+          class="helix-bottom-drawer"
+          style="height: {bottomDrawerHeight}px;"
+        >
+          <!-- Tabs bar -->
+          <div class="drawer-tabs">
+            <div class="tab-group">
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'terminal'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("terminal")}
+              >
+                <span>SERIAL TERMINAL</span>
+              </button>
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'plotter'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("plotter")}
+              >
+                <span>TELEMETRY PLOTTER</span>
+              </button>
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'registers'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("registers")}
+              >
+                <span>SFR REGISTERS</span>
+              </button>
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'emulation'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("emulation")}
+              >
+                <span>HARDWARE EMULATION</span>
+              </button>
+              <button
+                class="drawer-tab {$workspaceStore.activeBottomTab === 'memory'
+                  ? 'active'
+                  : ''}"
+                onclick={() => actions.setBottomTab("memory")}
+              >
+                <span>BUILD OUTPUT</span>
+              </button>
+            </div>
+            <div style="margin-left: auto; display: flex; align-items: center; padding-right: 10px;">
+              <button class="close-ai-btn" type="button" onclick={() => (terminalOpen = false)} title="Minimize Terminal">
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+
+        <!-- Active tab view -->
+        <div class="drawer-content">
+          {#if $workspaceStore.activeBottomTab === "terminal"}
+            <div class="serial-panel">
+              <div class="terminal-scroll">
+                {#each $workspaceStore.serialLogs as log}
+                  <div class="terminal-line">{log}</div>
+                {/each}
+                <div bind:this={terminalEndRef}></div>
+              </div>
+              <form class="terminal-input-bar" onsubmit={handleSerialSend}>
+                <span class="prompt">COM4 &gt;</span>
+                <input
+                  type="text"
+                  class="terminal-input"
+                  placeholder="Send serial bytes to MCU..."
+                  bind:value={serialInput}
+                />
+                <button type="submit">SEND</button>
+              </form>
+            </div>
+          {/if}
+
+          {#if $workspaceStore.activeBottomTab === "plotter"}
+            <div class="plotter-panel">
+              <div class="plot-stats-overlay">
+                <div class="stat-lbl">
+                  <span class="stat-dot temp"></span>TEMP:
+                  <span class="stat-val"
+                    >{$workspaceStore.analogSensors.temp.toFixed(1)} °C</span
+                  >
+                </div>
+                <div class="stat-lbl">
+                  <span class="stat-dot volt"></span>VDD:
+                  <span class="stat-val"
+                    >{$workspaceStore.analogSensors.voltage.toFixed(2)} V</span
+                  >
+                </div>
+                <div class="stat-lbl">
+                  <span class="stat-dot curr"></span>IDD:
+                  <span class="stat-val"
+                    >{$workspaceStore.analogSensors.current.toFixed(1)} mA</span
+                  >
+                </div>
+              </div>
+              <div class="plotter-canvas-container">
+                <canvas bind:this={canvasEl} class="telemetry-canvas"></canvas>
+              </div>
+            </div>
+          {/if}
+
+          {#if $workspaceStore.activeBottomTab === "registers"}
+            <div class="registers-panel">
+              <div class="peripheral-list">
+                {#each $workspaceStore.registers as reg}
+                  <!-- svelte-ignore a11y-click-events-have-key-events -->
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div
+                    class="peripheral-item {selectedPeripheral === reg.name
+                      ? 'active'
+                      : ''}"
+                    onclick={() => (selectedPeripheral = reg.name)}
+                  >
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <Cpu size={12} style="color: var(--accent-violet);" />
+                      <span>{reg.name}</span>
+                    </div>
+                    <span class="peripheral-address">{reg.value}</span>
+                  </div>
+                {/each}
+              </div>
+
+              <div class="register-details-grid">
+                {#each $workspaceStore.registers as reg}
+                  {#if selectedPeripheral === reg.name}
+                    {#each reg.bits || [] as bit}
+                      <div class="register-row">
+                        <div class="register-row-header">
+                          <span class="register-name">{bit.name}</span>
+                          <span class="register-value">0x{bit.value.toString(16).toUpperCase()}</span>
+                        </div>
+                        <div class="register-desc">{bit.description}</div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.65rem; color: var(--text-dark); margin-top: 4px;">
+                          <span>Range: {bit.range}</span>
+                        </div>
+                      </div>
+                    {/each}
+                  {/if}
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          {#if $workspaceStore.activeBottomTab === "emulation"}
+            <EmulationPanel />
+          {/if}
+
+          {#if $workspaceStore.activeBottomTab === "memory"}
+            <div class="serial-panel">
+              <div class="terminal-scroll" style="font-family: var(--font-mono);">
+                {#each $workspaceStore.buildLogs as log}
+                  <div
+                    class="terminal-line"
+                    style="color: {log.includes('Successful')
+                      ? 'var(--accent-success)'
+                      : log.includes('Error')
+                        ? 'var(--accent-error)'
+                        : '#94A3B8'};"
+                  >
+                    {log}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+        </footer>
+      {/if}
+
+      <!-- Terminal Toggle Pill -->
+      {#if !terminalOpen}
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="ai-toggle-pill" on:click={() => aiOpen = true}>
-          <MessageSquare size={14} />
-          <span>COPILOT</span>
+        <div class="terminal-toggle-pill" onclick={() => (terminalOpen = true)}>
+          <Sliders size={12} />
+          <span>TERMINAL</span>
         </div>
       {/if}
+    </main>
+
+    <!-- Right Panel Resizer Handle -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    {#if aiOpen}
+      <div
+        class="resize-handle vertical-handle"
+        onmousedown={() => { isDraggingRight = true; document.body.classList.add('dragging-col'); }}
+        style="right: {rightSidebarWidth}px;"
+      ></div>
+    {/if}
+
+    <!-- Right AI Panel Column -->
+    <aside
+      class="split-sidebar-right right-ai-panel"
+      style="width: {rightSidebarWidth}px; display: {aiOpen ? 'flex' : 'none'};"
+    >
+      <!-- Chat Header -->
+      <div class="ai-chat-header">
+        <div class="ai-chat-header-info">
+          <div class="ai-avatar-badge">
+            <Sparkles size={12} />
+          </div>
+          <div>
+            <div class="ai-chat-title">HARDCOREAI COPILOT</div>
+            <div class="ai-chat-subtitle">Embedded AI Assistant · Online</div>
+          </div>
+        </div>
+        <button class="close-ai-btn" onclick={() => (aiOpen = false)} title="Minimize panel">
+          <X size={13} />
+        </button>
+      </div>
+
+      <!-- Chat messages view -->
+      <div class="ai-copilot-chat-content">
+        {#each $workspaceStore.aiMessages as msg}
+          <div class="chat-row {msg.sender}">
+            {#if msg.sender === 'ai'}
+              <div class="chat-avatar ai-avatar"><Sparkles size={9} /></div>
+            {:else}
+              <div class="chat-avatar user-avatar">DEV</div>
+            {/if}
+            <div class="chat-msg-block {msg.sender}">
+              <div class="chat-msg-meta">
+                <span class="chat-msg-sender">{msg.sender === 'ai' ? 'HARDCOREAI' : 'You'}</span>
+                <span class="chat-msg-time">{msg.timestamp}</span>
+              </div>
+              <div class="chat-msg-bubble {msg.sender}">
+                {#if msg.text.includes('```')}
+                  {@const parts = msg.text.split('```')}
+                  {#each parts as part, i}
+                    {#if i % 2 === 0}
+                      {#if part.trim()}<p class="chat-msg-text">{part.trim()}</p>{/if}
+                    {:else}
+                      {@const codeLines = part.split('\n')}
+                      {@const code = codeLines.slice(1).join('\n')}
+                      <pre class="chat-code-block"><code>{code}</code></pre>
+                    {/if}
+                  {/each}
+                {:else}
+                  <p class="chat-msg-text">{msg.text}</p>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/each}
+
+        {#if $workspaceStore.aiWaiting}
+          <div class="chat-row ai">
+            <div class="chat-avatar ai-avatar"><Sparkles size={9} /></div>
+            <div class="chat-msg-block ai">
+              <div class="chat-msg-meta">
+                <span class="chat-msg-sender">HARDCOREAI</span>
+              </div>
+              <div class="chat-msg-bubble ai waiting-bubble">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+              </div>
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Input Box -->
+      <div class="chat-input-zone">
+        <form class="chat-input-form" onsubmit={handleAiSend}>
+          <input
+            type="text"
+            class="chat-input-field"
+            placeholder="Ask about registers, RAG docs, or request a code fix..."
+            bind:value={aiInput}
+          />
+          <button type="submit" class="chat-send-btn" disabled={!aiInput.trim()}>
+            <Send size={13} />
+          </button>
+        </form>
+        <div class="chat-input-hint">Press Enter to send · Shift+Enter for new line</div>
+      </div>
+    </aside>
+
+    <!-- AI Panel Collapsed Sidebar Strip -->
+    {#if !aiOpen}
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="ai-collapsed-strip" onclick={() => (aiOpen = true)} title="Open AI Copilot">
+        <div class="ai-collapsed-icon"><Sparkles size={14} /></div>
+        <div class="ai-collapsed-label">AI COPILOT</div>
+        <div class="ai-collapsed-dot"></div>
+      </div>
+    {/if}
     </div>
   {/if}
 </div>
 
 <style>
   /* Custom layouts specifically needed for Svelte overlays and resize indicators */
-  .resize-handle {
-    position: absolute;
-    z-index: 1000;
-    transition: background-color 0.2s ease;
-  }
-  
-  .resize-handle:hover {
-    background-color: var(--accent-violet);
-  }
-  
+  /* Vertical handles (left/right sidebars) remain absolute */
   .vertical-handle {
+    position: absolute;
     top: 50px;
     bottom: 0;
     width: 4px;
     cursor: col-resize;
+    z-index: 1000;
+    transition: background-color 0.2s ease;
   }
-  
+
+  .vertical-handle:hover {
+    background-color: var(--accent-violet);
+  }
+
+  /* Horizontal handle (bottom terminal) is an inline flex child */
   .horizontal-handle {
-    left: 0;
-    right: 0;
+    width: 100%;
     height: 4px;
+    flex-shrink: 0;
     cursor: row-resize;
+    background-color: var(--border-color);
+    transition: background-color 0.2s ease;
+  }
+
+  .horizontal-handle:hover {
+    background-color: var(--accent-violet);
   }
 
   .crash-overlay {
@@ -1113,17 +1581,17 @@
 
   .configurator-toggle-tab:hover {
     color: var(--text-bright);
-    background: #12121A;
+    background: #12121a;
   }
 
   .chat-code-block {
     background: #060609;
-    border: 1px solid #1A1A24;
+    border: 1px solid #1a1a24;
     border-radius: var(--radius-sm);
     padding: 8px;
     font-family: var(--font-mono);
     font-size: 0.68rem;
-    color: #F8FAFC;
+    color: #f8fafc;
     overflow-x: auto;
     margin: 6px 0 0 0;
   }
@@ -1158,113 +1626,47 @@
     border-radius: 50%;
   }
 
-  .stat-dot.temp { background: #F59E0B; }
-  .stat-dot.volt { background: #06B6D4; }
-  .stat-dot.curr { background: #10B981; }
+  .stat-dot.temp {
+    background: #f59e0b;
+  }
+  .stat-dot.volt {
+    background: #06b6d4;
+  }
+  .stat-dot.curr {
+    background: #10b981;
+  }
 
   .stat-val {
     color: var(--text-bright);
     font-family: var(--font-mono);
   }
 
-  .ai-toggle-pill {
-    position: absolute;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    background: var(--accent-violet);
-    border-top-left-radius: 6px;
-    border-bottom-left-radius: 6px;
-    color: white;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 6px;
-    font-size: 0.68rem;
-    font-weight: 600;
-    cursor: pointer;
-    z-index: 999;
-    box-shadow: -4px 0 10px rgba(0, 0, 0, 0.3);
-  }
-  .ai-toggle-pill span {
-    writing-mode: vertical-rl;
-    text-orientation: mixed;
+  /* Typing indicator dots animation */
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--accent-violet);
+    animation: bounce 1.2s infinite ease-in-out;
+    display: inline-block;
   }
 
-  .ai-toggle-pill:hover {
-    background: var(--accent-violet-hover);
-  }
-  .sidebar-search-panel input:focus,
-  .sidebar-git-panel input:focus,
-  .boards-config-panel .config-input:focus,
-  .boards-config-panel .config-select:focus {
-    border-color: var(--accent-violet);
-    outline: none;
+  .dot:nth-child(2) {
+    animation-delay: 0.2s;
   }
 
-  .git-commit-btn,
-  .boards-config-panel .browse-btn {
-    width: 100%;
-    background-color: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    color: var(--text-active);
-    font-size: 0.72rem;
-    padding: 6px 12px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all 0.15s ease;
-    font-weight: 600;
+  .dot:nth-child(3) {
+    animation-delay: 0.4s;
   }
 
-  .boards-config-panel .browse-btn {
-    width: auto;
-    margin-bottom: 8px;
-  }
-
-  .git-commit-btn:hover,
-  .boards-config-panel .browse-btn:hover {
-    background-color: var(--border-color);
-    color: var(--text-active);
-  }
-
-  .terminal-input-bar,
-  .ai-input-form {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .close-ai-btn {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 4px;
-    border-radius: var(--radius-sm);
-    transition: all 0.15s ease;
-  }
-  
-  .close-ai-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-active);
-  }
-  .ai-panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px;
-    border-bottom: 1px solid var(--border-color);
-  }
-  .ai-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--text-active);
+  @keyframes bounce {
+    0%, 80%, 100% {
+      transform: scale(0.6);
+      opacity: 0.5;
+    }
+    40% {
+      transform: scale(1);
+      opacity: 1;
+    }
   }
 </style>
