@@ -690,7 +690,6 @@ export const actions = {
     try {
       let history: any[] = [];
       let currentPhase: string | undefined = undefined;
-
       let selectedProvider = "openrouter";
       workspaceStore.update(s => {
         history = s.aiMessages.map(m => ({
@@ -703,9 +702,8 @@ export const actions = {
           currentPhase = lastAiMsg.phase;
         }
 
-        // Read the currently selected LLM provider
+        if (lastAiMsg?.phase) currentPhase = lastAiMsg.phase;
         selectedProvider = (s as any).selectedProvider || "openrouter";
-
         return s;
       });
 
