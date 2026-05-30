@@ -147,23 +147,37 @@ class RAGService:
         return copied
 
     def _run(self, args: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
+        import time
         self.config.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
         self.config.upload_dir.mkdir(parents=True, exist_ok=True)
         command = [str(self.config.rag_cli_path), *args]
-        completed = subprocess.run(
-            command,
-            text=True,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=self.config.timeout_seconds,
-            check=False,
-        )
-        if check and completed.returncode != 0:
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            completed = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.config.timeout_seconds,
+                check=False,
+            )
+            
             message = completed.stderr.strip() or completed.stdout.strip() or "rag-cli failed"
-            raise RuntimeError(message)
-        return completed
+            
+            if completed.returncode == 0:
+                return completed
+                
+            if "database is locked" in message and attempt < max_retries - 1:
+                time.sleep(1.0 * (attempt + 1))  # Exponential-ish backoff
+                continue
+                
+            if check:
+                raise RuntimeError(message)
+                
+            return completed
 
     @staticmethod
     def _extract_context(stdout: str | None) -> str:
