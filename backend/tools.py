@@ -335,6 +335,10 @@ class CodingToolbox(Toolbox):
     @tool(wants_body=True)
     def write_file(self, path: str) -> str:
         """Replace a code file's content entirely. Use only for a new file or a full rewrite."""
+        # Normalize bare filenames: "main.c" -> "src/main.c", "stm32f4xx.h" -> "src/stm32f4xx.h"
+        # Only applies to C/H files that have no directory component at all.
+        if "/" not in path and "\\" not in path and (path.endswith(".c") or path.endswith(".h")):
+            path = "src/" + path
         content = self.call_body.strip()
         
         if content.startswith("```"):
