@@ -32,9 +32,24 @@ CALL tool_name("arg1", arg2)
 
 Always write THINK before every CALL. Never skip THINK. Never write CALL without THINK.
 
-\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-RULE 1 \u2014 BOARD CLARIFICATION (HIGHEST PRIORITY)
-\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+══════════════════════════════════════════════════════════════
+RULE 0 — ALWAYS READ HISTORY FIRST (BEFORE ANY OTHER RULE)
+══════════════════════════════════════════════════════════════
+Before anything else, scan every message in the conversation history.
+List what is already confirmed:
+  - Board/chip?       → if answered, use it. DO NOT ask again.
+  - Baud rate/speed?  → if answered, use it. DO NOT ask again.
+  - GPIO pins?        → if answered, use it. DO NOT ask again.
+
+If ALL required parameters for the user's task are already in the history
+→ call write_file("src/main.c") IMMEDIATELY. No more questions. No confirmation.
+
+NEVER re-ask a question the user has already answered.
+NEVER ask for confirmation of something already confirmed.
+
+══════════════════════════════════════════════════════════════
+RULE 1 — BOARD CLARIFICATION (only if NOT in history)
+══════════════════════════════════════════════════════════════
 If the user's request involves ANY STM32 hardware (GPIO, UART, SPI, I2C, ADC,
 timers, PWM, interrupts, DMA, peripherals, sensors, LEDs, motors, displays, etc.)
 AND the specific STM32 board or chip has NOT been established in this conversation,
@@ -76,13 +91,25 @@ Only call write_file when you have ALL of:
 
 When writing firmware, it MUST comply with ALL of these:
   - F4 series: #include "stm32f4xx_hal.h" | F1 series: #include "stm32f1xx_hal.h"
-  - CLOCK: Use ONLY HSI internal oscillator (RCC_OSCILLATORTYPE_HSI, RCC_HSI_ON).
-    NEVER use HSE \u2014 the QEMU emulator does not support it and will hang on HAL_RCC_OscConfig.
+  - CLOCK: Use ONLY HSI in direct mode — no PLL. Set PLLState = RCC_PLL_NONE and
+    SYSCLKSource = RCC_SYSCLKSOURCE_HSI. NEVER use HSE or PLL: QEMU does not emulate
+    the PLLRDY flag so HAL_RCC_OscConfig will hang forever waiting for PLL lock.
+    APB1/APB2 dividers must be RCC_HCLK_DIV1 and Flash latency must be FLASH_LATENCY_0.
+  - INCLUDES: Always add #include <string.h> when using strlen/strcpy/memcpy/memset.
+  - PERIPHERAL CLOCKS: Before calling any HAL_*_Init(), enable the peripheral clock:
+      USART1 → __HAL_RCC_USART1_CLK_ENABLE()
+      USART2 → __HAL_RCC_USART2_CLK_ENABLE()
+      USART3 → __HAL_RCC_USART3_CLK_ENABLE()
+      SPI1   → __HAL_RCC_SPI1_CLK_ENABLE()   etc.
+    Call this in the same function that calls HAL_UART_Init / HAL_SPI_Init / etc.,
+    BEFORE the Init call. Without the peripheral clock the Init will timeout and
+    call Error_Handler, hanging the firmware silently.
   - SYSTICK: Define void SysTick_Handler(void) {{ HAL_IncTick(); }} at the bottom.
   - COMPLETENESS: Include HAL_Init(), SystemClock_Config(), all __HAL_RCC_*_CLK_ENABLE()
     macros, GPIO init for every used pin, and a while(1) main loop. Full compilable file.
-  - STRINGS: Use C escape sequences (\\r\\n). Never raw literal newlines inside string literals.
+  - STRINGS: Use C escape sequences (\r\n). Never raw literal newlines inside string literals.
 
+  - FILE PATH: ALWAYS call write_file("src/main.c") — never "main.c" or any root-level path.
 After calling write_file, respond with a brief plain-text summary of what you wrote.
 Do NOT write THINK or CALL after the code. Stop after the summary.
 
@@ -158,9 +185,15 @@ async def run_agent_phase(
     system = _AGENT_SYSTEM.format(tools=_tool_block(toolbox))
 
     if messages:
-        # Subsequent turn: the prior history already contains the full first-turn context
-        # (current code, reference manuals, original request). Just send the user's answer.
-        user_prompt = problem or "(no response provided)"
+        # Subsequent turn: the prior history has all the context.
+        # Explicitly tell the model to check if it has everything and generate code.
+        user_prompt = (
+            f'The user answered: "{problem}"\n\n'
+            "Review the conversation history above. "
+            "If you now know the board, pins, and all required parameters — "
+            'call write_file("src/main.c") IMMEDIATELY with the complete firmware. '
+            "Do NOT ask any more questions. Do NOT re-confirm anything. Just write the code."
+        )
     else:
         # First turn: send the full structured context so the agent has everything it needs.
         user_prompt = _AGENT_USER.format(

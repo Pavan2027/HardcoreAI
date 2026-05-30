@@ -581,23 +581,23 @@ export const actions = {
     try {
       await api.uploadRagDocument(file);
       
-      // Poll until the file shows up in listRagDocuments
+      // Poll until the file appears in the data_dir (backend stages it before ingesting).
+      // Large PDFs (20-40 MB) take much longer than 30s to ingest — poll up to 2 minutes.
       let found = false;
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 120; i++) {
         await new Promise(r => setTimeout(r, 1000));
         const res = await api.listRagDocuments();
-        if (res.documents.includes(file.name)) {
+        // API returns {documents: [{name, size}, ...]} — must compare .name, not the object itself
+        if (res.documents.some((d: any) => (typeof d === "string" ? d : d.name) === file.name)) {
           found = true;
           break;
         }
       }
 
       if (found) {
-        workspaceStore.update(s => ({
-          ...s,
-          ragUploadProgress: null,
-          ragDocuments: s.ragDocuments.map(d => d.id === id ? { ...d, status: "Ready in Database" } : d)
-        }));
+        // Refresh from the backend so UI shows the real, up-to-date file list
+        await actions.fetchRagDocuments();
+        workspaceStore.update(s => ({ ...s, ragUploadProgress: null }));
       } else {
         throw new Error("Timeout waiting for file to be ingested.");
       }
