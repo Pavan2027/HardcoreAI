@@ -32,10 +32,6 @@
     actions.stopEmulation();
   }
 
-  onDestroy(() => {
-    actions.stopEmulation();
-  });
-
   function handleStep() {
     // Manually step one program pointer instruction
     workspaceStore.update(s => {

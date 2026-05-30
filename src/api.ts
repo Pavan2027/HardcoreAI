@@ -153,7 +153,7 @@ export const api = {
     return res.json();
   },
 
-  async askAgent(query: string, conversationHistory?: any[], phase?: string) {
+  async askAgent(query: string, conversationHistory?: any[], phase?: string, provider: string = "openrouter") {
     const res = await fetch(`${BACKEND_URL}/api/projects/${activeProjectId}/agent/solve`, {
       method: "POST",
       headers: {
@@ -161,7 +161,7 @@ export const api = {
         "Authorization": "Bearer TEST_TOKEN"
       },
       body: JSON.stringify({ 
-        provider: "ollama",
+        provider,
         problem: query,
         conversation_history: conversationHistory,
         phase: phase
@@ -175,15 +175,17 @@ export const api = {
   
   async buildFirmware(projectId: string) {
     const files = await this.getProjectFiles(projectId);
-    const pioFiles = files.map((f: any) => ({
-      path: f.path,
-      content: f.content
-    }));
+
+    // Only sync source files and platformio.ini — never sync README, docs, etc.
+    // Sending all project files would overwrite Blinky's own project files (e.g. README.md).
+    const pioFiles = files
+      .filter((f: any) => f.path.startsWith("src/") || f.path === "platformio.ini")
+      .map((f: any) => ({ path: f.path, content: f.content }));
 
     if (!pioFiles.find((f: any) => f.path === "platformio.ini")) {
       pioFiles.push({
         path: "platformio.ini",
-        content: `[env:disco_f100rb]\nplatform = ststm32\nboard = disco_f100rb\nframework = stm32cube\n`
+        content: `[env:genericSTM32F405RG]\nplatform = ststm32\nboard = genericSTM32F405RG\nframework = stm32cube\n`
       });
     }
 

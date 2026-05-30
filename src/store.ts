@@ -147,6 +147,50 @@ export const actions = {
     }
   },
 
+  // Refresh only the file tree/contents without clearing chat or logs.
+  // Used after an agent response so the editor shows new code without losing the conversation.
+  refreshProjectFiles: async (id: string) => {
+    try {
+      const files = await api.getProjectFiles(id);
+
+      const fileContents: Record<string, string> = {};
+      const fileTree: FileItem[] = [];
+
+      files.forEach((f: any) => {
+        const fullPath = "/" + f.path;
+        fileContents[fullPath] = f.content;
+
+        const parts = fullPath.split("/").filter(Boolean);
+        let currentLevel = fileTree;
+        let builtPath = "";
+
+        parts.forEach((part, i) => {
+          builtPath += "/" + part;
+          const isFolder = i < parts.length - 1;
+          let existing = currentLevel.find(item => item.name === part);
+
+          if (!existing) {
+            existing = { name: part, path: builtPath, isFolder, ...(isFolder ? { children: [] } : {}) };
+            currentLevel.push(existing);
+          }
+
+          if (isFolder && existing.children) {
+            currentLevel = existing.children;
+          }
+        });
+      });
+
+      workspaceStore.update(s => ({
+        ...s,
+        fileTree,
+        fileContents,
+        // Intentionally do NOT touch aiMessages, buildLogs, emulationLogs, serialLogs
+      }));
+    } catch (e) {
+      console.error("Failed to refresh project files", e);
+    }
+  },
+
   loadProject: async (id: string) => {
     try {
       api.setActiveProject(id);
@@ -202,7 +246,18 @@ export const actions = {
         fileTree,
         fileContents,
         activeFile: files.length > 0 ? "/" + files[0].path : null,
-        aiMessages: history
+        // Clear all session-specific state so previous project data doesn't bleed over
+        aiMessages: [],
+        buildLogs: [],
+        emulationLogs: [],
+        serialLogs: [],
+        emulationRunning: false,
+        isDebugging: false,
+        debuggerActive: false,
+        currentLine: null,
+        crashed: false,
+        crashReason: null,
+
       }));
       
       // Also fetch RAG documents for this project
@@ -416,13 +471,26 @@ export const actions = {
 
     try {
       actions.addEmulationLog("Building firmware for QEMU...");
-      await api.buildFirmware(projectId);
+      const buildResultStr = await api.buildFirmware(projectId);
+      const buildResult = JSON.parse(buildResultStr);
+      
+      if (buildResult.output) {
+        // Split by newline and add each line to buildLogs
+        buildResult.output.split('\\n').forEach((line: string) => {
+          if (line.trim()) actions.addBuildLog(line);
+        });
+      }
+      
+      if (!buildResult.success) {
+        throw new Error(buildResult.error || "Compilation failed");
+      }
+      
       actions.addEmulationLog("Firmware build complete. Starting emulator...");
 
       await api.runEmulation();
       
       const es = api.streamEmulationLogs((msg) => {
-        actions.addEmulationLog(msg);
+        actions.addSerialLog(msg);
       });
       
       // Store event source if needed to close it later
@@ -623,6 +691,7 @@ export const actions = {
       let history: any[] = [];
       let currentPhase: string | undefined = undefined;
 
+      let selectedProvider = "openrouter";
       workspaceStore.update(s => {
         history = s.aiMessages.map(m => ({
           role: m.sender === "ai" ? "assistant" : "user",
@@ -634,10 +703,13 @@ export const actions = {
           currentPhase = lastAiMsg.phase;
         }
 
+        // Read the currently selected LLM provider
+        selectedProvider = (s as any).selectedProvider || "openrouter";
+
         return s;
       });
 
-      // Simulation command interceptor
+      // Simulation command interceptor (for UI testing)
       let response: any;
       if (text.toLowerCase().startsWith("simulate ")) {
         const cmd = text.toLowerCase().substring(9).trim();
@@ -681,11 +753,12 @@ export const actions = {
             }
           };
         } else {
-          response = await api.askAgent(text, history, currentPhase);
+          response = await api.askAgent(text, history, currentPhase, selectedProvider);
         }
       } else {
-        response = await api.askAgent(text, history, currentPhase);
+        response = await api.askAgent(text, history, currentPhase, selectedProvider);
       }
+
       
       let currentActiveProjectId: string | null = null;
       workspaceStore.update(s => {
@@ -694,14 +767,18 @@ export const actions = {
       });
       
       if (currentActiveProjectId) {
-        // Only load if actual changes were made, otherwise avoid overhead
+        // Only refresh files for real agent calls — skip for simulate test commands.
+        // Use refreshProjectFiles (not loadProject) so the chat history is preserved.
         if (!text.toLowerCase().startsWith("simulate ")) {
-          await actions.loadProject(currentActiveProjectId);
+          await actions.refreshProjectFiles(currentActiveProjectId);
         }
+
       }
 
       workspaceStore.update(s => {
-        let aiText = "I successfully completed your request.";
+        // Use the agent's actual final response text (answer, summary, or explanation).
+        // Fall back to a generic message only if the agent produced no text at all.
+        let aiText = response.coding?.final || response.wiring?.final || "I successfully completed your request.";
         let newStatus = "completed";
         let newPlan = undefined;
         let newOptions: string[] | undefined = undefined;
