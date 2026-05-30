@@ -24,6 +24,9 @@ export interface ChatMessage {
   plan?: string;
   options?: string[];
   phase?: string;
+  // Internal LLM messages saved when the agent pauses (waiting_for_user/approval).
+  // Passed back verbatim on the next turn so the agent can continue mid-dialog.
+  agentMessages?: {role: string; content: string}[];
 }
 
 export interface PlotDataPoint {
@@ -648,24 +651,27 @@ export const actions = {
     try {
       let history: any[] = [];
       let currentPhase: string | undefined = undefined;
-
       let selectedProvider = "openrouter";
-      workspaceStore.update(s => {
-        // Collect everything up to the current message (which was just added as 'user' above)
-        history = s.aiMessages.map(m => ({
-          role: m.sender === "ai" ? "assistant" : "user",
-          content: m.text
-        }));
 
-        // Find the last known phase from AI messages
-        const lastAiMsg = [...s.aiMessages].reverse().find(m => m.sender === "ai" && m.phase);
-        if (lastAiMsg) {
-          currentPhase = lastAiMsg.phase;
+      workspaceStore.update(s => {
+        // If the last AI message has stored internal agent messages (from a paused ask_user),
+        // use those directly — they already contain the full THINK/CALL/TOOL RESULT context
+        // the LLM needs to continue the dialog. Appending the user's answer to that list
+        // is all that's needed.
+        const lastAiMsg = [...s.aiMessages].reverse().find(m => m.sender === "ai");
+        if (lastAiMsg?.agentMessages && lastAiMsg.agentMessages.length > 0) {
+          // Use the stored agent messages as-is; the backend will append the new user turn.
+          history = lastAiMsg.agentMessages;
+        } else {
+          // First turn or normal follow-up: reconstruct from display text.
+          history = s.aiMessages.map(m => ({
+            role: m.sender === "ai" ? "assistant" : "user",
+            content: m.text
+          }));
         }
 
-        // Read the currently selected LLM provider
+        if (lastAiMsg?.phase) currentPhase = lastAiMsg.phase;
         selectedProvider = (s as any).selectedProvider || "openrouter";
-
         return s;
       });
 
@@ -690,6 +696,8 @@ export const actions = {
         let newPlan = undefined;
         let newOptions: string[] | undefined = undefined;
         let newPhase = undefined;
+        // Internal LLM messages to pass back on the next turn (preserves tool-call context).
+        let savedAgentMessages: {role: string; content: string}[] | undefined = undefined;
 
         // Check if agent is waiting for user or approval
         if (response.wiring?.status === "waiting_for_user" || response.wiring?.status === "waiting_for_approval") {
@@ -697,6 +705,8 @@ export const actions = {
           newStatus = response.wiring.status;
           newOptions = response.wiring.options;
           newPhase = response.wiring.phase;
+          // Save the agent's internal message list so the next turn can resume correctly.
+          if (response.wiring.messages?.length) savedAgentMessages = response.wiring.messages;
           if (newStatus === "waiting_for_approval") {
              newPlan = response.wiring.final;
              aiText = "Do you approve this plan?";
@@ -706,6 +716,8 @@ export const actions = {
           newStatus = response.coding.status;
           newOptions = response.coding.options;
           newPhase = response.coding.phase;
+          // Save the agent's internal message list so the next turn can resume correctly.
+          if (response.coding.messages?.length) savedAgentMessages = response.coding.messages;
           if (newStatus === "waiting_for_approval") {
              newPlan = response.coding.final;
              aiText = "Do you approve this plan?";
@@ -724,7 +736,8 @@ export const actions = {
               status: newStatus,
               plan: newPlan,
               options: newOptions,
-              phase: newPhase
+              phase: newPhase,
+              agentMessages: savedAgentMessages
             }
           ],
           aiWaiting: false
