@@ -24,9 +24,9 @@ export interface ChatMessage {
   plan?: string;
   options?: string[];
   phase?: string;
-  // Internal LLM messages saved when the agent pauses (waiting_for_user/approval).
-  // Passed back verbatim on the next turn so the agent can continue mid-dialog.
-  agentMessages?: {role: string; content: string}[];
+  inputType?: "radio" | "checkbox" | "select" | "buttons" | "text";
+  selectedValue?: string | string[];
+  submitted?: boolean;
 }
 
 export interface PlotDataPoint {
@@ -223,6 +223,23 @@ export const actions = {
         });
       });
 
+      let history: ChatMessage[] = [];
+      try {
+        history = await api.getConversationHistory(id);
+        if (history.length === 0) {
+          history = [
+            {
+              id: "default-greeting",
+              sender: "ai",
+              text: "Hello! I am your HARDCOREAI Copilot. I have loaded context for the **STM32F401RET6** target, SVD registers, and your current `CMake` configuration. \n\nHow can I help you write or debug firmware today?",
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            }
+          ];
+        }
+      } catch (err) {
+        console.error("Failed to load chat history", err);
+      }
+
       workspaceStore.update(s => ({
         ...s,
         activeProjectId: id,
@@ -240,6 +257,7 @@ export const actions = {
         currentLine: null,
         crashed: false,
         crashReason: null,
+
       }));
       
       // Also fetch RAG documents for this project
@@ -634,40 +652,54 @@ export const actions = {
     }
   },
   sendAiMessage: async (text: string) => {
-    workspaceStore.update(state => ({
-      ...state,
-      aiMessages: [
-        ...state.aiMessages,
-        {
-          id: Math.random().toString(),
-          sender: "user",
-          text,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-      ],
-      aiWaiting: true
-    }));
+    let projectId: string | null = null;
+    workspaceStore.update(state => {
+      projectId = state.activeProjectId;
+      
+      // Mark previous AI message as submitted when user submits an answer
+      const updatedMessages = [...state.aiMessages];
+      const lastAiIndex = updatedMessages.map(m => m.sender === 'ai').lastIndexOf(true);
+      if (lastAiIndex !== -1) {
+        updatedMessages[lastAiIndex] = {
+          ...updatedMessages[lastAiIndex],
+          submitted: true
+        };
+      }
+
+      return {
+        ...state,
+        aiMessages: [
+          ...updatedMessages,
+          {
+            id: Math.random().toString(),
+            sender: "user",
+            text,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }
+        ],
+        aiWaiting: true
+      };
+    });
+
+    if (projectId) {
+      let currentMsgs: ChatMessage[] = [];
+      workspaceStore.subscribe(s => { currentMsgs = s.aiMessages; })();
+      api.saveConversationHistory(projectId, currentMsgs).catch(console.error);
+    }
       
     try {
       let history: any[] = [];
       let currentPhase: string | undefined = undefined;
       let selectedProvider = "openrouter";
-
       workspaceStore.update(s => {
-        // If the last AI message has stored internal agent messages (from a paused ask_user),
-        // use those directly — they already contain the full THINK/CALL/TOOL RESULT context
-        // the LLM needs to continue the dialog. Appending the user's answer to that list
-        // is all that's needed.
-        const lastAiMsg = [...s.aiMessages].reverse().find(m => m.sender === "ai");
-        if (lastAiMsg?.agentMessages && lastAiMsg.agentMessages.length > 0) {
-          // Use the stored agent messages as-is; the backend will append the new user turn.
-          history = lastAiMsg.agentMessages;
-        } else {
-          // First turn or normal follow-up: reconstruct from display text.
-          history = s.aiMessages.map(m => ({
-            role: m.sender === "ai" ? "assistant" : "user",
-            content: m.text
-          }));
+        history = s.aiMessages.map(m => ({
+          role: m.sender === "ai" ? "assistant" : "user",
+          content: m.text
+        }));
+
+        const lastAiMsg = [...s.aiMessages].reverse().find(m => m.sender === "ai" && m.phase);
+        if (lastAiMsg) {
+          currentPhase = lastAiMsg.phase;
         }
 
         if (lastAiMsg?.phase) currentPhase = lastAiMsg.phase;
@@ -675,17 +707,70 @@ export const actions = {
         return s;
       });
 
-      const response = await api.askAgent(text, history, currentPhase, selectedProvider);
+      // Simulation command interceptor (for UI testing)
+      let response: any;
+      if (text.toLowerCase().startsWith("simulate ")) {
+        const cmd = text.toLowerCase().substring(9).trim();
+        if (cmd === "radio") {
+          response = {
+            wiring: {
+              status: "waiting_for_user",
+              question: "Please select the target SPI clock polarity (CPOL):",
+              options: ["CPOL = 0 (Clock active high, idle low)", "CPOL = 1 (Clock active low, idle high)"],
+              inputType: "radio",
+              phase: "spi_setup"
+            }
+          };
+        } else if (cmd === "checkbox") {
+          response = {
+            wiring: {
+              status: "waiting_for_user",
+              question: "Select the GPIO peripherals you want to enable:",
+              options: ["GPIOA (pins PA0-PA15)", "GPIOB (pins PB0-PB15)", "GPIOC (pins PC0-PC15)", "GPIOD (pins PD0-PD15)"],
+              inputType: "checkbox",
+              phase: "gpio_setup"
+            }
+          };
+        } else if (cmd === "select") {
+          response = {
+            wiring: {
+              status: "waiting_for_user",
+              question: "Choose a prescaler value for the timer clock division:",
+              options: ["Prescaler = 1", "Prescaler = 2", "Prescaler = 4", "Prescaler = 8", "Prescaler = 16"],
+              inputType: "select",
+              phase: "timer_setup"
+            }
+          };
+        } else if (cmd === "approval") {
+          response = {
+            wiring: {
+              status: "waiting_for_approval",
+              question: "Do you approve this configuration plan?",
+              final: "1. Enable RCC clock for GPIOA.\n2. Configure PA5 mode register (MODER) as output.\n3. Configure speed register (OSPEEDR) as Medium speed.\n4. Initialize state register (ODR) as low.",
+              phase: "approval_phase"
+            }
+          };
+        } else {
+          response = await api.askAgent(text, history, currentPhase, selectedProvider);
+        }
+      } else {
+        response = await api.askAgent(text, history, currentPhase, selectedProvider);
+      }
+
       
-      let projectId: string | null = null;
+      let currentActiveProjectId: string | null = null;
       workspaceStore.update(s => {
-        projectId = s.activeProjectId;
+        currentActiveProjectId = s.activeProjectId;
         return s;
       });
       
-      if (projectId) {
-        // Only refresh files (editor shows new code) — do NOT call loadProject which clears the chat.
-        await actions.refreshProjectFiles(projectId);
+      if (currentActiveProjectId) {
+        // Only refresh files for real agent calls — skip for simulate test commands.
+        // Use refreshProjectFiles (not loadProject) so the chat history is preserved.
+        if (!text.toLowerCase().startsWith("simulate ")) {
+          await actions.refreshProjectFiles(currentActiveProjectId);
+        }
+
       }
 
       workspaceStore.update(s => {
@@ -696,67 +781,109 @@ export const actions = {
         let newPlan = undefined;
         let newOptions: string[] | undefined = undefined;
         let newPhase = undefined;
-        // Internal LLM messages to pass back on the next turn (preserves tool-call context).
-        let savedAgentMessages: {role: string; content: string}[] | undefined = undefined;
+        let newInputType: any = "buttons";
 
-        // Check if agent is waiting for user or approval
-        if (response.wiring?.status === "waiting_for_user" || response.wiring?.status === "waiting_for_approval") {
-          aiText = response.wiring.question || "I need more information.";
-          newStatus = response.wiring.status;
-          newOptions = response.wiring.options;
-          newPhase = response.wiring.phase;
-          // Save the agent's internal message list so the next turn can resume correctly.
-          if (response.wiring.messages?.length) savedAgentMessages = response.wiring.messages;
+        const agentResponse = response.wiring || response.coding;
+        if (agentResponse) {
+          aiText = agentResponse.question || "I need more information.";
+          newStatus = agentResponse.status;
+          newOptions = agentResponse.options;
+          newPhase = agentResponse.phase;
+          newInputType = agentResponse.inputType || "buttons";
           if (newStatus === "waiting_for_approval") {
-             newPlan = response.wiring.final;
-             aiText = "Do you approve this plan?";
-          }
-        } else if (response.coding?.status === "waiting_for_user" || response.coding?.status === "waiting_for_approval") {
-          aiText = response.coding.question || "I need more information.";
-          newStatus = response.coding.status;
-          newOptions = response.coding.options;
-          newPhase = response.coding.phase;
-          // Save the agent's internal message list so the next turn can resume correctly.
-          if (response.coding.messages?.length) savedAgentMessages = response.coding.messages;
-          if (newStatus === "waiting_for_approval") {
-             newPlan = response.coding.final;
+             newPlan = agentResponse.final;
              aiText = "Do you approve this plan?";
           }
         }
 
+        const newMsg: ChatMessage = {
+          id: Math.random().toString(),
+          sender: "ai",
+          text: aiText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: newStatus,
+          plan: newPlan,
+          options: newOptions,
+          phase: newPhase,
+          inputType: newInputType,
+          submitted: false
+        };
+
+        const updatedMsgs = [...s.aiMessages, newMsg];
+        if (projectId) {
+          api.saveConversationHistory(projectId, updatedMsgs).catch(console.error);
+        }
+
         return {
           ...s,
-          aiMessages: [
-            ...s.aiMessages,
-            {
-              id: Math.random().toString(),
-              sender: "ai",
-              text: aiText,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              status: newStatus,
-              plan: newPlan,
-              options: newOptions,
-              phase: newPhase,
-              agentMessages: savedAgentMessages
-            }
-          ],
+          aiMessages: updatedMsgs,
           aiWaiting: false
         };
       });
     } catch (e: any) {
+      workspaceStore.update(s => {
+        const errorMsg: ChatMessage = {
+          id: Math.random().toString(),
+          sender: "ai",
+          text: `❌ **Error connecting to agent:** ${e.message}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        const updatedMsgs = [...s.aiMessages, errorMsg];
+        if (projectId) {
+          api.saveConversationHistory(projectId, updatedMsgs).catch(console.error);
+        }
+        return {
+          ...s,
+          aiMessages: updatedMsgs,
+          aiWaiting: false
+        };
+      });
+    }
+  },
+
+  clearChat: async (projectId: string) => {
+    try {
+      await api.deleteConversationHistory(projectId);
       workspaceStore.update(s => ({
         ...s,
         aiMessages: [
-          ...s.aiMessages,
           {
-            id: Math.random().toString(),
+            id: "default-greeting",
             sender: "ai",
-            text: `❌ **Error connecting to agent:** ${e.message}`,
+            text: "Hello! I am your HARDCOREAI Copilot. I have loaded context for the **STM32F401RET6** target, SVD registers, and your current `CMake` configuration. \n\nHow can I help you write or debug firmware today?",
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           }
-        ],
-        aiWaiting: false
+        ]
       }));
+    } catch (e) {
+      console.error("Failed to clear chat history", e);
+    }
+  },
+
+  renameProject: async (id: string, name: string) => {
+    try {
+      await api.renameProject(id, name);
+      await actions.loadProjects();
+    } catch (e) {
+      console.error("Failed to rename project", e);
+      alert("Failed to rename project");
+    }
+  },
+
+  deleteActiveProject: async (id: string) => {
+    try {
+      if (confirm(`Are you sure you want to delete the active project? This will permanently erase all project files.`)) {
+        await api.deleteProject(id);
+        await actions.loadProjects();
+        workspaceStore.update(s => ({
+          ...s,
+          activeProjectId: null,
+          showWelcomeScreen: true
+        }));
+      }
+    } catch (e) {
+      console.error("Failed to delete project", e);
+      alert("Failed to delete project");
     }
   }
 };

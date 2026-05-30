@@ -19,6 +19,13 @@ export interface ChatMessage {
   sender: "user" | "ai";
   text: string;
   timestamp: string;
+  status?: string;
+  plan?: string;
+  options?: string[];
+  phase?: string;
+  inputType?: "radio" | "checkbox" | "select" | "buttons" | "text";
+  selectedValue?: string | string[];
+  submitted?: boolean;
 }
 
 export interface PlotDataPoint {
@@ -172,6 +179,8 @@ const initialRagDocs: RagDocument[] = [
 
 export const workspaceStore = writable({
   // Project & Files
+  activeProjectId: "my-mock-project" as string | null,
+  projectsList: [{ id: "my-mock-project", name: "My Mock Project", created_at: new Date().toISOString() }] as any[],
   activeFile: "/src/main.c" as string | null,
   fileContents: {
     "/src/main.c": mockMainC,
@@ -298,6 +307,24 @@ export const workspaceStore = writable({
 
 // Helper Actions for Store
 export const actions = {
+  renameProject: (id: string, name: string) => {
+    workspaceStore.update(s => {
+      const updatedList = s.projectsList.map(p => p.id === id ? { ...p, name } : p);
+      return { ...s, projectsList: updatedList };
+    });
+  },
+
+  deleteActiveProject: (id: string) => {
+    if (confirm("Are you sure you want to delete the active project?")) {
+      workspaceStore.update(s => ({
+        ...s,
+        activeProjectId: null,
+        projectsList: s.projectsList.filter(p => p.id !== id),
+        showWelcomeScreen: true
+      }));
+    }
+  },
+
   setActiveFile: (path: string | null) => {
     workspaceStore.update(s => ({ ...s, activeFile: path }));
   },
@@ -573,8 +600,18 @@ export const actions = {
   },
   sendAiMessage: (text: string) => {
     workspaceStore.update(state => {
+      // Mark previous AI message as submitted when user submits an answer
+      const updatedMessages = [...state.aiMessages];
+      const lastAiIndex = updatedMessages.map(m => m.sender === 'ai').lastIndexOf(true);
+      if (lastAiIndex !== -1) {
+        updatedMessages[lastAiIndex] = {
+          ...updatedMessages[lastAiIndex],
+          submitted: true
+        };
+      }
+
       const newMsgs = [
-        ...state.aiMessages,
+        ...updatedMessages,
         {
           id: Math.random().toString(),
           sender: "user" as const,
@@ -586,12 +623,46 @@ export const actions = {
       // Setup response simulation
       setTimeout(() => {
         let aiResponse = "I am scanning your active workspace and RAG databases...";
-        
-        if (text.toLowerCase().includes("crash") || text.toLowerCase().includes("fault")) {
+        let status = "completed";
+        let plan = undefined;
+        let options: string[] | undefined = undefined;
+        let phase = undefined;
+        let inputType: any = "buttons";
+
+        const lowerText = text.toLowerCase();
+        if (lowerText.startsWith("simulate ")) {
+          const cmd = lowerText.substring(9).trim();
+          if (cmd === "radio") {
+            status = "waiting_for_user";
+            aiResponse = "Please select the target SPI clock polarity (CPOL):";
+            options = ["CPOL = 0 (Clock active high, idle low)", "CPOL = 1 (Clock active low, idle high)"];
+            inputType = "radio";
+            phase = "spi_setup";
+          } else if (cmd === "checkbox") {
+            status = "waiting_for_user";
+            aiResponse = "Select the GPIO peripherals you want to enable:";
+            options = ["GPIOA (pins PA0-PA15)", "GPIOB (pins PB0-PB15)", "GPIOC (pins PC0-PC15)", "GPIOD (pins PD0-PD15)"];
+            inputType = "checkbox";
+            phase = "gpio_setup";
+          } else if (cmd === "select") {
+            status = "waiting_for_user";
+            aiResponse = "Choose a prescaler value for the timer clock division:";
+            options = ["Prescaler = 1", "Prescaler = 2", "Prescaler = 4", "Prescaler = 8", "Prescaler = 16"];
+            inputType = "select";
+            phase = "timer_setup";
+          } else if (cmd === "approval") {
+            status = "waiting_for_approval";
+            aiResponse = "Do you approve this plan?";
+            plan = "1. Enable RCC clock for GPIOA.\n2. Configure PA5 mode register (MODER) as output.\n3. Configure speed register (OSPEEDR) as Medium speed.\n4. Initialize state register (ODR) as low.";
+            phase = "approval_phase";
+          } else {
+            aiResponse = `Unknown simulation command: '${cmd}'. Available: radio, checkbox, select, approval.`;
+          }
+        } else if (lowerText.includes("crash") || lowerText.includes("fault")) {
           aiResponse = "Analyzing crash dump... GDB reports `CFSR = 0x00008200` which corresponds to a **Precise Data Bus Error**. You are attempting to write to address `0x00000000` (NULL pointer) inside `R0` during the execution at PC `0x08001A4E` (*crash_trigger = 0xDEADC0DE).\n\nTo resolve this: initialize the pointer variables before dereferencing, e.g.:\n```c\nstatic uint32_t val_holder = 0;\nuint32_t *crash_trigger = &val_holder;\n*crash_trigger = 0xDEADC0DE;\n```";
-        } else if (text.toLowerCase().includes("gpio") || text.toLowerCase().includes("pin") || text.toLowerCase().includes("led")) {
+        } else if (lowerText.includes("gpio") || lowerText.includes("pin") || lowerText.includes("led")) {
           aiResponse = "To configure a GPIO pin as an output (e.g. Pin A5 for the MCU Led), enable the GPIO clock, then map the HAL parameters:\n```c\nGPIO_InitTypeDef GPIO_InitStruct = {0};\n__HAL_RCC_GPIOA_CLK_ENABLE();\n\nGPIO_InitStruct.Pin = GPIO_PIN_5;\nGPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;\nGPIO_InitStruct.Pull = GPIO_NOPULL;\nGPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;\nHAL_GPIO_Init(GPIOA, &GPIO_InitStruct);\n```";
-        } else if (text.toLowerCase().includes("rag") || text.toLowerCase().includes("datasheet") || text.toLowerCase().includes("pdf")) {
+        } else if (lowerText.includes("rag") || lowerText.includes("datasheet") || lowerText.includes("pdf")) {
           aiResponse = "I have scanned the active **RAG databases** (3 files loaded). According to the `STM32F401 Reference Manual`, the system tick timer SysTick operates off the AHB clock. Would you like me to generate a FreeRTOS delay implementation using this?";
         } else {
           aiResponse = "I have reviewed your active firmware codes. Your peripheral configurations and linker layouts (`stm32f401.ld`) are structured properly. Let me know if you would like me to compile or execute it in the emulator.";
@@ -605,7 +676,13 @@ export const actions = {
               id: Math.random().toString(),
               sender: "ai",
               text: aiResponse,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              status,
+              plan,
+              options,
+              phase,
+              inputType,
+              submitted: false
             }
           ],
           aiWaiting: false
