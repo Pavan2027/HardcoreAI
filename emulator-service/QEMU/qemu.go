@@ -52,12 +52,12 @@ func RunQEMU(firmwarePath string) (string, error) {
 
 	qemuCmd = exec.Command(
 		"qemu-system-arm",
-		"-M", "stm32vldiscovery",
+		"-M", "olimex-stm32-h405",
 		"-kernel", firmwarePath,
-		"-S",
 		"-gdb", "tcp::3333",
 		"-display", "none",
-		"-serial", "tcp:127.0.0.1:4444,server,nowait",
+		"-serial", "null", // USART1 -> null
+		"-serial", "tcp:127.0.0.1:4444,server,nowait", // USART2 -> port 4444
 	)
 
 	err := qemuCmd.Start()
@@ -69,8 +69,8 @@ func RunQEMU(firmwarePath string) (string, error) {
 	go func() {
 		var conn net.Conn
 		var err error
-		// Retry connecting to QEMU's serial TCP port for up to 2 seconds
-		for i := 0; i < 20; i++ {
+		// Retry connecting to QEMU's serial TCP port for up to 5 seconds
+		for i := 0; i < 50; i++ {
 			conn, err = net.Dial("tcp", "127.0.0.1:4444")
 			if err == nil {
 				break

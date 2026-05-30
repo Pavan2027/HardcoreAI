@@ -367,11 +367,13 @@ async def run_phase(
         # Clone it so we don't mutate the caller's list
         messages = list(messages)
 
-    # Always prepend system and user prompt so the LLM has context and tools
-    messages = [
-        {"role": "system", "content": system_prompt},
+    # Build the message list in chronological order:
+    #   [system, ...prior_conversation..., current_user_turn]
+    # The current user_prompt MUST be last so the model sees it as the most recent message.
+    # Putting it second (before history) was causing the model to read the conversation backwards.
+    messages = [{"role": "system", "content": system_prompt}] + messages + [
         {"role": "user", "content": user_prompt},
-    ] + messages
+    ]
         
     trace = AgentTrace(phase=phase)
 

@@ -12,7 +12,7 @@ type GDBDebugger struct {
 func (g *GDBDebugger) Connect() error {
 
 	mi, err := NewGDBMI(
-		"./Blinky/.pio/build/disco_f100rb/firmware.elf",
+		"./Blinky/.pio/build/genericSTM32F405RG/firmware.elf",
 	)
 
 	if err != nil {

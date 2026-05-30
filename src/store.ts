@@ -144,6 +144,50 @@ export const actions = {
     }
   },
 
+  // Refresh only the file tree/contents without clearing chat or logs.
+  // Used after an agent response so the editor shows new code without losing the conversation.
+  refreshProjectFiles: async (id: string) => {
+    try {
+      const files = await api.getProjectFiles(id);
+
+      const fileContents: Record<string, string> = {};
+      const fileTree: FileItem[] = [];
+
+      files.forEach((f: any) => {
+        const fullPath = "/" + f.path;
+        fileContents[fullPath] = f.content;
+
+        const parts = fullPath.split("/").filter(Boolean);
+        let currentLevel = fileTree;
+        let builtPath = "";
+
+        parts.forEach((part, i) => {
+          builtPath += "/" + part;
+          const isFolder = i < parts.length - 1;
+          let existing = currentLevel.find(item => item.name === part);
+
+          if (!existing) {
+            existing = { name: part, path: builtPath, isFolder, ...(isFolder ? { children: [] } : {}) };
+            currentLevel.push(existing);
+          }
+
+          if (isFolder && existing.children) {
+            currentLevel = existing.children;
+          }
+        });
+      });
+
+      workspaceStore.update(s => ({
+        ...s,
+        fileTree,
+        fileContents,
+        // Intentionally do NOT touch aiMessages, buildLogs, emulationLogs, serialLogs
+      }));
+    } catch (e) {
+      console.error("Failed to refresh project files", e);
+    }
+  },
+
   loadProject: async (id: string) => {
     try {
       api.setActiveProject(id);
@@ -181,7 +225,18 @@ export const actions = {
         activeProjectId: id,
         fileTree,
         fileContents,
-        activeFile: files.length > 0 ? "/" + files[0].path : null
+        activeFile: files.length > 0 ? "/" + files[0].path : null,
+        // Clear all session-specific state so previous project data doesn't bleed over
+        aiMessages: [],
+        buildLogs: [],
+        emulationLogs: [],
+        serialLogs: [],
+        emulationRunning: false,
+        isDebugging: false,
+        debuggerActive: false,
+        currentLine: null,
+        crashed: false,
+        crashReason: null,
       }));
       
       // Also fetch RAG documents for this project
@@ -395,13 +450,26 @@ export const actions = {
 
     try {
       actions.addEmulationLog("Building firmware for QEMU...");
-      await api.buildFirmware(projectId);
+      const buildResultStr = await api.buildFirmware(projectId);
+      const buildResult = JSON.parse(buildResultStr);
+      
+      if (buildResult.output) {
+        // Split by newline and add each line to buildLogs
+        buildResult.output.split('\\n').forEach((line: string) => {
+          if (line.trim()) actions.addBuildLog(line);
+        });
+      }
+      
+      if (!buildResult.success) {
+        throw new Error(buildResult.error || "Compilation failed");
+      }
+      
       actions.addEmulationLog("Firmware build complete. Starting emulator...");
 
       await api.runEmulation();
       
       const es = api.streamEmulationLogs((msg) => {
-        actions.addEmulationLog(msg);
+        actions.addSerialLog(msg);
       });
       
       // Store event source if needed to close it later
@@ -581,6 +649,7 @@ export const actions = {
       let history: any[] = [];
       let currentPhase: string | undefined = undefined;
 
+      let selectedProvider = "openrouter";
       workspaceStore.update(s => {
         // Collect everything up to the current message (which was just added as 'user' above)
         history = s.aiMessages.map(m => ({
@@ -594,10 +663,13 @@ export const actions = {
           currentPhase = lastAiMsg.phase;
         }
 
+        // Read the currently selected LLM provider
+        selectedProvider = (s as any).selectedProvider || "openrouter";
+
         return s;
       });
 
-      const response = await api.askAgent(text, history, currentPhase);
+      const response = await api.askAgent(text, history, currentPhase, selectedProvider);
       
       let projectId: string | null = null;
       workspaceStore.update(s => {
@@ -606,11 +678,14 @@ export const actions = {
       });
       
       if (projectId) {
-        await actions.loadProject(projectId);
+        // Only refresh files (editor shows new code) — do NOT call loadProject which clears the chat.
+        await actions.refreshProjectFiles(projectId);
       }
 
       workspaceStore.update(s => {
-        let aiText = "I successfully completed your request.";
+        // Use the agent's actual final response text (answer, summary, or explanation).
+        // Fall back to a generic message only if the agent produced no text at all.
+        let aiText = response.coding?.final || response.wiring?.final || "I successfully completed your request.";
         let newStatus = "completed";
         let newPlan = undefined;
         let newOptions: string[] | undefined = undefined;

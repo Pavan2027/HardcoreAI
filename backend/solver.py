@@ -1,13 +1,10 @@
-"""Two-phase solver: wire the workbench, then write the firmware.
+"""Single-phase conversational agent for HardcoreAI.
 
-`solve_project` is the entry point the API route calls. It runs phase 1 (wiring)
-in one isolated agent context, commits the netlist, then runs phase 2 (coding)
-in a brand-new context that only sees the finished netlist. Each phase's THINK/
-CALL trace is collected and returned so the frontend can show what happened.
-
-The two contexts are deliberately separate: the coding model never sees the
-wiring model's reasoning, only its result. This keeps each window small (good
-for the 1-bit local quant) and stops phase-1 noise from derailing phase 2.
+Replaces the old two-phase wiring→coding approach with a unified
+conversational STM32 copilot that:
+  1. Asks clarifying questions when board/pin/peripheral is unspecified.
+  2. Answers technical questions in plain text using the RAG system.
+  3. Generates complete, compilable STM32 HAL firmware when all info is known.
 """
 
 from __future__ import annotations
@@ -16,170 +13,115 @@ from functools import partial
 
 import llm
 from agent import AgentTrace, run_phase
-from tools import CodingToolbox, WiringToolbox
+from tools import CodingToolbox
 
 # ---------------------------------------------------------------------------
-# Prompt templates
+# System prompt — STM32 conversational copilot
 # ---------------------------------------------------------------------------
 
-_WIRING_SYSTEM = """\
-You are a hardware engineer working in the HardcoreAI workbench. You place
-electronic components on a canvas and wire their pins together to satisfy a
-problem statement.
+_AGENT_SYSTEM = """\
+You are HardcoreAI Copilot, an expert AI assistant for STM32 embedded systems firmware development.
+You help users write, debug, and understand STM32 HAL C firmware for STM32 microcontrollers.
 
 You have these tools:
 {tools}
 
-PROTOCOL — to use a tool you MUST write exactly two lines:
+PROTOCOL — to use a tool, write exactly TWO lines:
 THINK: <one sentence: what you just learned and what you will do next>
-CALL tool_name("string arg", 123)
+CALL tool_name("arg1", arg2)
 
-Rules:
-- Always write THINK before every CALL. Never skip THINK.
-- Arguments are positional and in the order shown above. Quote every string.
-- After a TOOL RESULT, write another THINK then your next CALL.
-- Call list_catalogue first to see what you can place, and describe_component
-  before wiring so you use real pin names.
-- Every project needs the STM32F407 Discovery (or similar F407) as the
-  controller unless the problem says otherwise.
-- Wire power and ground correctly; route motors through a driver, not straight
-  to a battery; put a resistor in series with an LED.
-- CRITICAL: You MUST use the `search_hardware_manuals` tool to verify pinouts, exact register addresses, and configuration sequences BEFORE taking action. DO NOT hallucinate datasheet values under any circumstances.
-- If the user's request is purely a question, or if they only want you to write firmware and no new wiring is needed, you MUST skip this phase. To skip, STOP and reply exactly with: "SKIP WIRING".
-- CRITICAL RULE: If the user is asking a general question (e.g., 'What is this?', 'How do I...'), do NOT use the ask_user tool to ask what circuit they want. You MUST reply exactly with "SKIP WIRING" and STOP.
-- If the user asks for a simple component (e.g., 'wire an LED'), just place it. Do NOT use ask_user to ask about unrelated components (like sensors or encoders) just because they appeared in RAG search results.
-- When the workbench fully satisfies the problem and every needed wire exists,
-  STOP: reply with a plain sentence summarising what you built and write NO
-  THINK or CALL line.
+Always write THINK before every CALL. Never skip THINK. Never write CALL without THINK.
+
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+RULE 1 \u2014 BOARD CLARIFICATION (HIGHEST PRIORITY)
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+If the user's request involves ANY STM32 hardware (GPIO, UART, SPI, I2C, ADC,
+timers, PWM, interrupts, DMA, peripherals, sensors, LEDs, motors, displays, etc.)
+AND the specific STM32 board or chip has NOT been established in this conversation,
+you MUST call ask_user FIRST and stop. Do not generate any code first.
+
+Example:
+THINK: The user wants to blink an LED but has not specified the board, so I must ask.
+CALL ask_user("Which STM32 board are you targeting?", "STM32F407 Discovery, STM32F103C8T6 Blue Pill, STM32F401 Nucleo, STM32F446RE Nucleo, Other - I will describe it")
+
+Use list_supported_boards to see all board details and default pins.
+
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+RULE 2 \u2014 PIN CLARIFICATION
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+If the user mentions a peripheral (LED, button, buzzer, servo, sensor, motor, relay)
+but has NOT specified which GPIO pin, ask for the pin AFTER confirming the board.
+Offer the board's onboard LED as the first option:
+  - F407 Discovery: PD12 (green LED)
+  - Blue Pill:      PC13 (built-in LED, active LOW)
+  - F401/F446 Nucleo: PA5 (LD2)
+
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+RULE 3 \u2014 ANSWERING QUESTIONS (no code needed)
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+If the user is asking a factual or debugging question (e.g. "How does SPI work?",
+"Why is my UART not working?", "What is DMA?", "Explain pull-up resistors"),
+do NOT call write_file. Instead:
+  1. CALL search_hardware_manuals with a relevant query to check uploaded datasheets
+  2. Answer clearly in plain text
+  3. Offer to generate example code at the end if it would help
+
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+RULE 4 \u2014 CODE GENERATION (only when fully ready)
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+Only call write_file when you have ALL of:
+  - Board/chip confirmed (from user or from prior conversation history)
+  - GPIO pin(s) confirmed or agreed upon
+  - All peripheral parameters clear (baud rate, I2C address, SPI mode, freq, etc.)
+
+When writing firmware, it MUST comply with ALL of these:
+  - F4 series: #include "stm32f4xx_hal.h" | F1 series: #include "stm32f1xx_hal.h"
+  - CLOCK: Use ONLY HSI internal oscillator (RCC_OSCILLATORTYPE_HSI, RCC_HSI_ON).
+    NEVER use HSE \u2014 the QEMU emulator does not support it and will hang on HAL_RCC_OscConfig.
+  - SYSTICK: Define void SysTick_Handler(void) {{ HAL_IncTick(); }} at the bottom.
+  - COMPLETENESS: Include HAL_Init(), SystemClock_Config(), all __HAL_RCC_*_CLK_ENABLE()
+    macros, GPIO init for every used pin, and a while(1) main loop. Full compilable file.
+  - STRINGS: Use C escape sequences (\\r\\n). Never raw literal newlines inside string literals.
+
+After calling write_file, respond with a brief plain-text summary of what you wrote.
+Do NOT write THINK or CALL after the code. Stop after the summary.
+
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+RULE 5 \u2014 CONVERSATION AWARENESS
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+Read the conversation history carefully before every response.
+If the board, pin, baud rate, or any parameter was already established earlier in the
+conversation, do NOT ask for it again. Use it directly to write the code.
 """
 
-_WIRING_USER = """\
-PROBLEM STATEMENT:
+_AGENT_USER = """\
+CURRENT PROJECT CODE (src/main.c):
+{current_code}
+
+REFERENCE MANUALS AVAILABLE: {has_docs}
+
+USER REQUEST:
 {problem}
 
-CURRENT WORKBENCH:
-{workbench}
-
-CURRENT WIRES:
-{wires}
-
-Configure the workbench: place any missing components and wire the pins so the
-problem is solved. Begin.
+Check RULE 1 first: if this is a hardware request and no board has been specified yet,
+call ask_user immediately. Otherwise proceed with RULE 3 (questions) or RULE 4 (code).
 """
-
-_CODING_SYSTEM = """\
-You are an embedded firmware engineer. You write STM32F407 HAL C
-code for a circuit that has ALREADY been wired on the workbench.
-
-You have these tools:
-{tools}
-
-PROTOCOL — to use a tool you MUST write exactly two lines:
-THINK: <one sentence: what you just learned and what you will do next>
-CALL tool_name("string arg", 123)
-
-Rules:
-- Always write THINK before every CALL. Never skip THINK.
-- Arguments are positional, in the order shown. Quote every string.
-- Call netlist first to see exactly which STM32 pins are wired to what.
-- Map STM32 header pin labels to ports: label like "C13" -> GPIOC pin 13,
-  "A0" -> GPIOA pin 0, "B12" -> GPIOB pin 12.
-- CRITICAL: If the circuit involves a specific sensor, driver, or peripheral IC, you MUST call search_hardware_manuals BEFORE writing code to find its exact register addresses, I2C/SPI commands, and configuration sequence. DO NOT hallucinate datasheet values under any circumstances.
-
-WRITING CODE — tool:
-- write_file(path): use to write the code. The file content MUST be provided as a markdown code block immediately on the next line after the CALL statement.
-
-  Example:
-  CALL write_file("src/main.c")
-  ```c
-  #include "stm32f4xx_hal.h"
-  // ... rest of the code
-  ```
-  
-  - The firmware MUST use the STM32 HAL framework. Do NOT use the legacy Standard Peripheral Library (SPL). Do NOT include "stm32f10x.h".
-  - The firmware must be complete and compilable: MUST include "stm32f4xx_hal.h",
-    implement HAL_Init(), clock/GPIO init for every wired pin, and a main loop.
-  - CRITICAL RULES FOR C FIRMWARE:
-    - If the user's request is purely a general question, STOP and answer the question in plain text. Do NOT output any code block and do NOT call write_file.
-    - Otherwise, use STM32F4xx HAL.
-    - Set up the system clock to 168 MHz if possible, or use HSI.
-    - Initialize all used peripherals in your code.
-    1. Declare all global variables (like huart1) at the TOP of the file.
-    2. Use standard escape sequences for strings (e.g. "\\r\\n"). Do NOT use raw newlines.
-    3. You MUST define `void SysTick_Handler(void) {{ HAL_IncTick(); }}` at the bottom of the file so HAL timeouts work.
-- CRITICAL: Peripherals fail silently if clocks are off. If using UART, you MUST enable its clock (e.g., `__HAL_RCC_USART1_CLK_ENABLE()`) AND its GPIO port clock (e.g., `__HAL_RCC_GPIOA_CLK_ENABLE()`), and set the TX pin to `GPIO_MODE_AF_PP`.
-- When src/main.c correctly implements the problem for the given netlist,
-  STOP: reply with a plain sentence summarising the firmware and write NO
-  THINK or CALL line.
-"""
-
-_CODING_USER = """\
-PROBLEM STATEMENT:
-{problem}
-
-FINISHED NETLIST (the circuit is already wired — do not change it):
-{netlist}
-
-PLACED COMPONENTS:
-{workbench}
-
-Write the firmware into src/main.c so it implements the problem for this exact
-circuit. Begin.
-"""
-
-
-_DEBUGGING_SYSTEM = """\\
-You are an autonomous debugging agent for an embedded STM32 system.
-The firmware has just been written. Your job is to verify it works using the GDB emulator.
-
-You have these tools:
-{tools}
-
-PROTOCOL — to use a tool you MUST write exactly two lines:
-THINK: <one sentence: what you just learned and what you will do next>
-CALL tool_name("string arg", 123)
-
-Rules:
-- Always write THINK before every CALL. Never skip THINK.
-- You must call `build_and_run()` first to start the emulator.
-- Then call `connect_debugger()` to attach GDB.
-- You can use `step_debugger()` and `read_registers()` to verify the PC and other registers change as expected.
-- If everything looks good, STOP: reply with a plain sentence summarising the success.
-"""
-
-_DEBUGGING_USER = """\\
-PROBLEM STATEMENT:
-{problem}
-
-Verify the firmware behavior. Begin.
-"""
-
-def _summarise_workbench(workbench: dict) -> str:
-    comps = workbench.get("placed_components", [])
-    if not comps:
-        return "(empty)"
-    return "\n".join(
-        f"  [{c['id']}] {c['display_name']} ({c.get('definition_id')})" for c in comps
-    )
-
-
-def _summarise_wires(workbench: dict) -> str:
-    wires = workbench.get("wires", [])
-    if not wires:
-        return "(none)"
-    return "\n".join(
-        f"  {w['from']['componentId']}.{w['from']['pinName']} -> "
-        f"{w['to']['componentId']}.{w['to']['pinName']}"
-        for w in wires
-    )
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Helpers
 # ---------------------------------------------------------------------------
 
+def _tool_block(toolbox) -> str:
+    from agent import build_tool_block
+    return build_tool_block(toolbox.specs())
 
-async def run_wiring_phase(
+
+# ---------------------------------------------------------------------------
+# Public API \u2014 single conversational agent phase
+# ---------------------------------------------------------------------------
+
+async def run_agent_phase(
     *,
     provider: str,
     project_id: str,
@@ -187,41 +129,11 @@ async def run_wiring_phase(
     problem: str,
     catalogue: dict,
     workbench: dict,
+    files: dict,
     user_id: str,
     messages: list[dict] | None = None,
 ) -> tuple[AgentTrace, dict]:
-    """Run phase 1. Returns (trace, mutated-workbench)."""
-    toolbox = WiringToolbox(
-        project_name=project_name,
-        problem=problem,
-        catalogue=catalogue,
-        workbench=workbench,
-        user_id=user_id,
-        project_id=project_id,
-    )
-    system = _WIRING_SYSTEM.format(tools=_tool_block(toolbox))
-    user = _WIRING_USER.format(
-        problem=problem or "(none given)",
-        workbench=_summarise_workbench(workbench),
-        wires=_summarise_wires(workbench),
-    )
-    trace = await run_phase(
-        phase="wiring",
-        system_prompt=system,
-        user_prompt=user,
-        messages=messages,
-        toolbox=toolbox,
-        complete_fn=partial(llm.complete, provider),
-    )
-    return trace, toolbox.workbench
-
-
-async def run_coding_phase(
-    *, provider: str, project_name: str, problem: str, catalogue: dict,
-    workbench: dict, files: dict, user_id: str, project_id: str,
-    messages: list[dict] | None = None,
-) -> tuple[AgentTrace, dict]:
-    """Run phase 2. Returns (trace, mutated-files)."""
+    """Run the conversational STM32 copilot. Returns (trace, mutated-files)."""
     toolbox = CodingToolbox(
         project_name=project_name,
         problem=problem,
@@ -231,16 +143,36 @@ async def run_coding_phase(
         user_id=user_id,
         project_id=project_id,
     )
-    system = _CODING_SYSTEM.format(tools=_tool_block(toolbox))
-    user = _CODING_USER.format(
-        problem=problem or "(none given)",
-        netlist=toolbox.netlist(),
-        workbench=_summarise_workbench(workbench),
+
+    # Include the current main.c so the agent can see existing code (capped to save tokens)
+    current_code = files.get("src/main.c", {}).get("content", "(empty \u2014 no code written yet)")
+    if len(current_code) > 2500:
+        current_code = current_code[:2500] + "\n... (truncated for brevity)"
+
+    has_docs = (
+        "Yes \u2014 use search_hardware_manuals() to query the uploaded datasheets."
+        if user_id else
+        "No documents uploaded yet."
     )
+
+    system = _AGENT_SYSTEM.format(tools=_tool_block(toolbox))
+
+    if messages:
+        # Subsequent turn: the prior history already contains the full first-turn context
+        # (current code, reference manuals, original request). Just send the user's answer.
+        user_prompt = problem or "(no response provided)"
+    else:
+        # First turn: send the full structured context so the agent has everything it needs.
+        user_prompt = _AGENT_USER.format(
+            current_code=current_code,
+            has_docs=has_docs,
+            problem=problem or "(no request provided)",
+        )
+
     trace = await run_phase(
         phase="coding",
         system_prompt=system,
-        user_prompt=user,
+        user_prompt=user_prompt,
         messages=messages,
         toolbox=toolbox,
         complete_fn=partial(llm.complete, provider),
@@ -248,35 +180,20 @@ async def run_coding_phase(
     return trace, toolbox.files
 
 
-def _tool_block(toolbox) -> str:
-    from agent import build_tool_block
+# ---------------------------------------------------------------------------
+# Legacy stubs \u2014 kept for import compatibility, no longer called
+# ---------------------------------------------------------------------------
 
-    return build_tool_block(toolbox.specs())
+async def run_wiring_phase(*args, **kwargs):
+    """Deprecated \u2014 wiring phase removed. Use run_agent_phase instead."""
+    raise NotImplementedError("Wiring phase has been removed. Use run_agent_phase.")
 
-async def run_debugging_phase(
-    *, provider: str, project_name: str, problem: str, catalogue: dict,
-    workbench: dict, files: dict, user_id: str, project_id: str,
-    messages: list[dict] | None = None,
-) -> tuple[AgentTrace, dict]:
-    """Run phase 3 (Debugging). Returns (trace, files)."""
-    from tools import DebuggingToolbox
-    toolbox = DebuggingToolbox(
-        project_name=project_name,
-        problem=problem,
-        catalogue=catalogue,
-        workbench=workbench,
-        files=files,
-        user_id=user_id,
-        project_id=project_id,
-    )
-    system = _DEBUGGING_SYSTEM.format(tools=_tool_block(toolbox))
-    user = _DEBUGGING_USER.format(problem=problem or "(none given)")
-    trace = await run_phase(
-        phase="debugging",
-        system_prompt=system,
-        user_prompt=user,
-        messages=messages,
-        toolbox=toolbox,
-        complete_fn=partial(llm.complete, provider),
-    )
-    return trace, toolbox.files
+
+async def run_coding_phase(*args, **kwargs):
+    """Deprecated \u2014 use run_agent_phase instead."""
+    raise NotImplementedError("Use run_agent_phase instead.")
+
+
+async def run_debugging_phase(*args, **kwargs):
+    """Deprecated \u2014 use run_agent_phase instead."""
+    raise NotImplementedError("Use run_agent_phase instead.")

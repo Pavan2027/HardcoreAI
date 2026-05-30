@@ -66,7 +66,7 @@ PROVIDERS = {
 # Generation is deterministic-ish and short: the agent only needs a THINK line
 # plus one CALL, or a brief final answer.
 TEMPERATURE = 0.1
-MAX_TOKENS = 1024
+MAX_TOKENS = 4096
 HTTP_TIMEOUT = 120.0
 
 

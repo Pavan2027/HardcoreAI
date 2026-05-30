@@ -337,15 +337,19 @@ class CodingToolbox(Toolbox):
         """Replace a code file's content entirely. Use only for a new file or a full rewrite."""
         content = self.call_body.strip()
         
-        # If the LLM included markdown fences, strip them out
         if content.startswith("```"):
             lines = content.split("\n")
             if len(lines) > 1:
                 # Remove the first line (e.g. ```c)
                 lines = lines[1:]
-                # Remove the last line if it's just ```
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
+                # Find the closing fence and discard everything after it
+                closing_idx = -1
+                for i, line in enumerate(lines):
+                    if line.strip() == "```":
+                        closing_idx = i
+                        break
+                if closing_idx != -1:
+                    lines = lines[:closing_idx]
                 content = "\n".join(lines).strip()
                 
         language = "markdown" if path.endswith(".md") else "c"
@@ -353,8 +357,9 @@ class CodingToolbox(Toolbox):
         if existing is not None:
             language = existing.get("language", language)
             
-        # Fallback: if the AI forgets the required SysTick_Handler for the STM32 HAL, auto-inject it
-        if path.endswith(".c") and "SysTick_Handler" not in content:
+        # Auto-inject SysTick_Handler only when code uses the STM32 HAL
+        # (HAL_Init present). Avoids duplicate symbol errors with custom RTOS.
+        if path.endswith(".c") and "SysTick_Handler" not in content and "HAL_Init" in content:
             content = content.rstrip() + "\n\nvoid SysTick_Handler(void) {\n    HAL_IncTick();\n}\n"
             
         self.files[path] = {"language": language, "content": content}
@@ -411,6 +416,37 @@ class CodingToolbox(Toolbox):
         return f"Applied {len(applied)} edit(s) to {path} ({spans})."
 
     @tool
+    def list_supported_boards(self) -> str:
+        """List all supported STM32 boards with chip details, HAL header, and default pin assignments."""
+        return """Supported STM32 boards:
+
+STM32F407 Discovery (STM32F407VGT6 — Cortex-M4, up to 168 MHz)
+  Header : #include \"stm32f4xx_hal.h\"
+  LEDs   : PD12 (green), PD13 (orange), PD14 (red), PD15 (blue)
+  UART   : USART2 on PA2 (TX) / PA3 (RX)
+  Button : PA0 (active HIGH)
+
+STM32F103C8T6 — Blue Pill (Cortex-M3, up to 72 MHz)
+  Header : #include \"stm32f1xx_hal.h\"
+  LED    : PC13 (built-in, active LOW — reset to turn ON)
+  UART   : USART1 on PA9 (TX) / PA10 (RX)
+  Button : PA0 (active HIGH)
+
+STM32F401 Nucleo (STM32F401RET6 — Cortex-M4, up to 84 MHz)
+  Header : #include \"stm32f4xx_hal.h\"
+  LED    : PA5 (LD2, active HIGH)
+  UART   : USART2 on PA2 (TX) / PA3 (RX)
+  Button : PC13 (active LOW)
+
+STM32F446RE Nucleo (STM32F446RET6 — Cortex-M4, up to 180 MHz)
+  Header : #include \"stm32f4xx_hal.h\"
+  LED    : PA5 (LD2, active HIGH)
+  UART   : USART2 on PA2 (TX) / PA3 (RX)
+  Button : PC13 (active LOW)
+
+CRITICAL: Always use HSI oscillator. HSE is not supported by the QEMU emulator."""
+
+    @tool
     def netlist(self) -> str:
         """Show the full netlist: every wire with both endpoints' component + pin role."""
         wires = self.workbench["wires"]
@@ -454,7 +490,7 @@ class DebuggingToolbox(Toolbox):
         if not any(f["path"] == "platformio.ini" for f in pio_files):
             pio_files.append({
                 "path": "platformio.ini",
-                "content": "[env:disco_f100rb]\\nplatform = ststm32\\nboard = disco_f100rb\\nframework = stm32cube\\n"
+                "content": "[env:genericSTM32F405RG]\\nplatform = ststm32\\nboard = genericSTM32F405RG\\nframework = stm32cube\\n"
             })
             
         try:

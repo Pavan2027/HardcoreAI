@@ -134,7 +134,7 @@ func enableCORS(next http.Handler) http.Handler {
 func EmulateHandler(w http.ResponseWriter, r *http.Request) {
 
 	output, err := QEMU.RunQEMU(
-		"./Blinky/.pio/build/disco_f100rb/firmware.elf",
+		"./Blinky/.pio/build/genericSTM32F405RG/firmware.elf",
 	)
 
 	if err != nil {

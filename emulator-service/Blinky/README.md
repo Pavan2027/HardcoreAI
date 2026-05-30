@@ -1,4 +1,4 @@
-# Hello World
+# UART Project
 
 Hardware notes and firmware plan.
 
